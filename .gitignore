@@ -1,0 +1,24 @@
+*.pdf
+*.png
+*.svg
+*.eps
+*.ps
+*.bed
+*.gz
+*.Rdata
+*.RData
+*.Rda
+*.Rds
+*.tar
+*.csv
+*.tsv
+*.txt
+*.tab
+*.xls
+*SRX*
+*ERX*
+*DRX*
+*.h5
+*.gctx
+writing/related_work/*
+applications/beeline freezes
