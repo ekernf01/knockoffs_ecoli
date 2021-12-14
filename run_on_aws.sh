@@ -4,7 +4,7 @@
 # For now, I use this interactively to put in passwords etc, but it's almost fully automated.
 
 # Retrieve the ecoli demo repo
-git clone https://ekernf01@bitbucket.org/ekernf01/transcriptome_knockoffs.git
+git clone https://github.com/ekernf01/knockoffs_ecoli.git
 
 # Install aws cli, build-essential, git, and R v4
 sudo apt-get update
@@ -23,14 +23,10 @@ aws s3 cp --recursive s3://cahanlab/eric.kernfeld/datalake/dream5       datalake
 aws s3 cp --recursive s3://cahanlab/eric.kernfeld/datalake/modern_ecoli datalake/modern_ecoli
 
 # Retrieve our package
-<<<<<<< HEAD
 git clone https://github.com/ekernf01/rlookc.git
-=======
-git clone https://ekernf01@bitbucket.org/ekernf01/rlookc.git
->>>>>>> cfd97fdcac23b2bf0a52cf5c2362563ffde59565
 
 # Enter the ecoli demo repo.
-cd transcriptome_knockoffs/applications/dream5_sa_ec/ecoli/
+cd knockoffs_ecoli
 
 # Change this if you want to run a new set of conditions
 mkdir v26 && cd v26
@@ -38,26 +34,12 @@ mkdir v26 && cd v26
 # Install some R packages
 Rscript ../dream5_ecoli_install.R
 Rscript ../dream5_ecoli_install.R # it needs to refresh for some reason
-
 # Run tests. 
-<<<<<<< HEAD
 nohup Rscript ../dream5_ecoli.R 
-
 # Mop up (easy to run this locally too to refine plots)
-=======
-nohup Rscript ../dream5_ecoli.R &
-
-# Mop up (easy to run this locally too)
->>>>>>> cfd97fdcac23b2bf0a52cf5c2362563ffde59565
 Rscript ../dream5_ecoli_plots.R
-
 # export results 
 aws s3 sync .. s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli
-
 # # Then, on laptop:
-<<<<<<< HEAD
 # mkdir v26 && cd v26
-=======
-# mkdir v24 && cd v24
->>>>>>> cfd97fdcac23b2bf0a52cf5c2362563ffde59565
-# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v24 .
+# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v26.
