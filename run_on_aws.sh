@@ -5,8 +5,11 @@
 
 # Retrieve the ecoli demo repo
 git clone https://github.com/ekernf01/knockoffs_ecoli.git
+# Run it all at once
+# source knockoffs_ecoli/run_on_aws.sh
 
 # Install aws cli, build-essential, git, and R v4
+cat "Installing software..."
 sudo apt-get update
 sudo apt-get install -y build-essential
 sudo apt-get install -y awscli
@@ -19,6 +22,7 @@ R --version #should be 4.1.2
 aws configure
 
 # Retrieve the datasets used.
+cat "Fetching data..."
 aws s3 cp --recursive s3://cahanlab/eric.kernfeld/datalake/dream5       datalake/dream5
 aws s3 cp --recursive s3://cahanlab/eric.kernfeld/datalake/modern_ecoli datalake/modern_ecoli
 
@@ -42,4 +46,4 @@ Rscript ../dream5_ecoli_plots.R
 aws s3 sync .. s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli
 # # Then, on laptop:
 # mkdir v26 && cd v26
-# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v26.
+# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v26 .

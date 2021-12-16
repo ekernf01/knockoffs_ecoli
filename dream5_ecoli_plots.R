@@ -1,5 +1,6 @@
 #setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v24")
 source("../dream5_ecoli_setup.R")
+ggplot2::theme_update(text = element_text(family = "ArialMT"))
 # Collect results to make certain key summary plots
 cat("Loading experimental results and making UMAPs...")
 conditions_with_summaries = conditions = read.csv("experiments_to_run.csv", row.names = 1)
@@ -56,10 +57,14 @@ calibration_gs %>%
   ggplot() +
   geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = condition_on, shape = condition_on)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
-  ggtitle("Calibration and counfounders") +
+  ggtitle("Calibration and confounders") +
   facet_grid(knockoff_method~ifelse(address_genetic_perturbations, "Knockouts addressed", "Not addressed")) +
-  scale_y_continuous(limits = 0:1)
+  theme(legend.position = "bottom") +   
+  scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
+  scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
+  coord_fixed()
 ggsave("fig_confounders.pdf", width = 6, height = 3)
+ggsave("fig_confounders.svg", width = 6, height = 3)
 
 # same, on confounding, but make a simpler plot with error bars
 fillna =function(x, filler){ x[is.na(x)] = filler; x}
@@ -79,10 +84,14 @@ calibration_gs %>%
   ) +
   geom_pointrange() +
   geom_abline(aes(slope = 1, intercept = 0)) +
-  ggtitle("Calibration and counfounders") +
-  facet_grid(knockoff_method~condition_on) +
-  scale_y_continuous(limits = 0:1)
-ggsave("fig_confounders_errorbars.pdf", width = 12, height = 3)
+  ggtitle("Calibration and confounders") +
+  facet_wrap(~gsub("_plus_", "+", gsub("pert_", "", condition_on)), nrow = 1) +
+  theme(text = element_text(family = "ArialMT"), legend.position = "bottom") +  
+  scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
+  scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
+  coord_fixed()
+ggsave("fig_confounders_errorbars.pdf", width = 8, height = 4)
+ggsave("fig_confounders_errorbars.svg", width = 8, height = 4)
 
 # Plot on confounding, but include power
 fillna =function(x, filler){ x[is.na(x)] = filler; x}
@@ -99,12 +108,14 @@ calibration_gs %>%
                   y = num_discoveries,
                   shape = condition_on, color = condition_on)
   ) +
-  geom_line() +
   geom_point() +
   scale_y_log10() +
-  ggtitle("Calibration and counfounders") +
-  facet_grid(~knockoff_method)
+  ggtitle("Calibration and confounders") +
+  facet_grid(~knockoff_method) +
+  theme(legend.position = "bottom") +  
+  scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1)   
 ggsave("fig_confounders_power.pdf", width = 6, height = 3)
+ggsave("fig_confounders_power.svg", width = 6, height = 3)
 
 # Vary knockoff generation method (KNN exchangeability diagnostic)
 conditions_with_summaries %>%
@@ -113,17 +124,21 @@ conditions_with_summaries %>%
       seed==1 &
       !address_genetic_perturbations
   ) %>%
-  head(8) %>%
-  ggplot(mapping = aes(
-    x = KNN_exchangeability_proportion,
-    color = knockoff_method,
-    label = knockoff_method,
-    y = KNN_exchangeability_p
-  )) +
-  geom_vline(aes(xintercept = 0.5)) +
-  geom_point() +
-  ggrepel::geom_label_repel()
-ggsave("fig_knockoff_type_knn.pdf", width = 6, height = 5)
+  head(7) %>%
+  dplyr::mutate(knockoff_method = reorder(knockoff_method, KNN_exchangeability_proportion)) %>%
+  tidyr::pivot_longer(cols = c("KNN_exchangeability_proportion", "KNN_exchangeability_p"), 
+                      names_prefix = "KNN_exchangeability_") %>%
+  ggplot() +
+  geom_bar(aes(
+    x = knockoff_method,
+    y = value
+  ), stat = "identity") +
+  facet_wrap(~name, scales = "free_y") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
+  geom_hline(data = data.frame(name = "proportion", value = 0.5), aes(yintercept = value), color = "red") +
+  ggtitle("KNN exchangeability test")
+ggsave("fig_knockoff_type_knn.pdf", width = 4, height = 3)
+ggsave("fig_knockoff_type_knn.svg", width = 4, height = 3)
 
 # Vary knockoff generation method (real Y, calibration)
 calibration_gs %>%
@@ -138,9 +153,12 @@ calibration_gs %>%
   geom_line(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
   ggtitle("Calibration by knockoff method") +
-  facet_grid(~address_genetic_perturbations) +
-  scale_y_continuous(limits = 0:1)
-ggsave("fig_knockoff_type.pdf", width = 6, height = 5)
+  facet_grid(~address_genetic_perturbations) +  
+  scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
+  scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
+  coord_fixed()
+ggsave("fig_knockoff_type.pdf", width = 4, height = 3)
+ggsave("fig_knockoff_type.svg", width = 4, height = 3)
 
 # Vary knockoff generation method (real Y, AUPR)
 calibration_gs %>%
@@ -165,6 +183,7 @@ calibration_gs %>%
   ylab("Precision") +
   facet_wrap(~gold_standard_name)
 ggsave("fig_knockoff_type_aupr.pdf", width = 6, height = 5)
+ggsave("fig_knockoff_type_aupr.svg", width = 6, height = 5)
 
 # Vary knockoff method (simulated Y)
 calibration_sim %>%
@@ -174,8 +193,12 @@ calibration_sim %>%
   geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
   ggtitle("Calibration by method", subtitle = "Simulated target genes") +
-  scale_y_continuous(limits = 0:1)
-ggsave("fig_knockoff_type_sim.pdf", width = 6, height = 5)
+  scale_y_continuous(limits = 0:1) +  
+  scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
+  scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
+  coord_fixed() 
+ggsave("fig_knockoff_type_sim.pdf", width = 4, height = 3)
+ggsave("fig_knockoff_type_sim.svg", width = 4, height = 3)
 
 # Fig number uncertain: various gold standards
 calibration_gs %>%
@@ -194,6 +217,7 @@ calibration_gs %>%
   ylab("Precision") +
   facet_wrap(~seed, ncol =2)
 ggsave("fig_gs.pdf", width = 6, height = 5)
+ggsave("fig_gs.svg", width = 6, height = 5)
 
 # Fig number uncertain: replicates with different random seed
 calibration_gs %>%
@@ -209,6 +233,7 @@ calibration_gs %>%
   xlab("Recall") +
   ylab("Precision")
 ggsave("fig_randomness.pdf", width = 6, height = 5)
+ggsave("fig_randomness.svg", width = 6, height = 5)
 
 # Visualize data and knockoffs: does the important structure seem to be captured?
 umap_actual    = umap::umap(ecoli_tf_expression, random.state = 0) %>% extract2("layout")
@@ -227,6 +252,8 @@ umaps %>%
   coord_fixed() +
   xlab("UMAP1") + ylab("UMAP2") +
   facet_wrap(~knockoff_method, nrow = 2) +
+  scale_color_discrete(name = "Cluster") +
   ggtitle("UMAP and K-means clusters from E. coli TF expression")
 ggsave(("fig_umaps.pdf"), width = 10, height =6)
+ggsave(("fig_umaps.svg"), width = 10, height =6)
 
