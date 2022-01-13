@@ -47,6 +47,18 @@ umaps %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param)
 calibration_gs %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_sim %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 
+# Record the top false positives in the most successful setting
+# For later manual inspection
+read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv") %>%
+  subset( !is_confirmed) %>%
+  dplyr::arrange(q) %>% 
+  write.csv("top_false_positives.csv")
+
+read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/dream5/results_with_evaluation.csv") %>%
+  subset(q<0.5) %>% 
+  extract2("is_confirmed") %>%
+  table
+
 # Vary confounder handling
 calibration_gs %>%
   subset( T &
@@ -82,7 +94,7 @@ calibration_gs %>%
                   ymin = pmax(empirical_fdr - moe_95, 0),
                   ymax = pmin(empirical_fdr + moe_95, 1))
   ) +
-  geom_pointrange() +
+  geom_pointrange(colour = "grey") +
   geom_abline(aes(slope = 1, intercept = 0)) +
   ggtitle("Calibration and confounders") +
   facet_wrap(~gsub("_plus_", "+", gsub("pert_", "", condition_on)), nrow = 1) +

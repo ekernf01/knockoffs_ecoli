@@ -45,5 +45,4 @@ Rscript ../dream5_ecoli_plots.R
 # export results 
 aws s3 sync .. s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli
 # # Then, on laptop:
-# mkdir v26 && cd v26
-# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v26 .
+# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v26 v26
