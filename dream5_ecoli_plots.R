@@ -47,6 +47,73 @@ umaps %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param)
 calibration_gs %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_sim %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 
+# Check how well ChIP data capture known stuff from regulonDB
+check_chip_power = function( regulon_network, 
+                             regulon_network_name = deparse(substitute(regulon_network)),
+                             chip_network, 
+                             chip_network_name = deparse(substitute(chip_network)) ) {
+    regulon_network %>%
+    dplyr::mutate(expected_in_chip = Gene1_name %in% ecoli_network_chip$Gene1_name) %>%
+    dplyr::mutate(present_in_chip =
+                    Gene1_name %in% chip_network$Gene1_name & 
+                    Gene2_name %in% chip_network$Gene2_name) %>%
+    subset(expected_in_chip) %>%
+    with(table(Gene1_name, factor(as.character(present_in_chip), levels = c("FALSE", "TRUE")))) %>%
+    as.data.frame.matrix %>%
+    add_totals %>% 
+    set_colnames(c("missing_in_chip", "present_in_chip")) %>%
+    dplyr::add_rownames(var = "regulator") %>%
+    dplyr::mutate(total =   missing_in_chip + present_in_chip ) %>%
+    dplyr::mutate(prop_present = present_in_chip/total ) %>%
+    dplyr::mutate(regulon_network = regulon_network_name ) %>%
+    dplyr::mutate(chip_network = chip_network_name) %>%
+    dplyr::arrange(total) %>% 
+    dplyr::mutate(regulator = factor(regulator, levels = regulator))
+}
+chip_power = Reduce(rbind, list(
+  check_chip_power(regulon_network = ecoli_network_regulondb10_9,
+                   regulon_network_name = "RegulonDB 10.9 full",
+                   chip_network = ecoli_network_chip, 
+                   chip_network_name = "No TU augmentation"),
+  
+  check_chip_power(regulon_network = ecoli_network_regulondb10_9_additional_binding_support,
+                   regulon_network_name = "RegulonDB 10.9 filtered for additional binding support",
+                   chip_network = ecoli_network_chip, 
+                   chip_network_name = "No TU augmentation"),
+  
+  check_chip_power(regulon_network = ecoli_network_regulondb10_9,
+                   regulon_network_name = "RegulonDB 10.9 full",
+                   chip_network = ecoli_network_tu_augmented, 
+                   chip_network_name = "With TU augmentation"),
+  
+  check_chip_power(regulon_network = ecoli_network_regulondb10_9_additional_binding_support,
+                   regulon_network_name = "RegulonDB 10.9 filtered for additional binding support",
+                   chip_network = ecoli_network_tu_augmented, 
+                   chip_network_name = "With TU augmentation")
+))
+gold_standard_power = subset(chip_power, regulator == "Mean")
+ggplot(chip_power) + 
+  geom_bar(stat = "identity", aes(x = regulator, y = -missing_in_chip), fill = "red") + 
+  geom_bar(stat = "identity", aes(x = regulator, y = present_in_chip), fill ="black") + 
+  coord_flip() + 
+  ggtitle("ChIP power to verify prior findings") + 
+  facet_grid(chip_network ~ regulon_network, scales = "free_x") +
+  ylab("Number of RegulonDB hypotheses that are \n(missing | confirmed)\n in ChIP data ") 
+ggsave("fig_chip_power.pdf", width = 5, height = 5)
+ggsave("fig_chip_power.svg", width = 5, height = 5)
+
+# Test our best setting using the DREAM5 new results (53 new predictions explicitly tested)
+explicitly_tested = 
+  read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv") %>% 
+  merge(subset(ecoli_dream5_new_test, is_positive_control=="no"),
+        by = c("Gene1_name", "Gene2_name"),
+        all.x = F,
+        suffixes = c("chip_augmented", "DREAM5_new_tests"))
+explicitly_tested %>% 
+  subset(rlookc::knockoffQvals(knockoff_stat)<0.5) %>% 
+  extract2("is_confirmedDREAM5_new_tests") %>% 
+  table
+
 # Record the top false positives in the most successful setting
 # For later manual inspection
 read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv") %>%
@@ -57,7 +124,11 @@ read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/addre
 read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/dream5/results_with_evaluation.csv") %>%
   subset(q<0.5) %>% 
   extract2("is_confirmed") %>%
-  table
+  fillna("unknown") %>%
+  table %>%
+  t %>%
+  t %>%
+  add_totals("total", colSums)
 
 # Vary confounder handling
 calibration_gs %>%
@@ -69,9 +140,9 @@ calibration_gs %>%
   ggplot() +
   geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = condition_on, shape = condition_on)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
+  geom_abline(aes(slope = gold_standard_power, intercept = 1-gold_standard_power), linetype = "dotted") +
   ggtitle("Calibration and confounders") +
   facet_grid(knockoff_method~ifelse(address_genetic_perturbations, "Knockouts addressed", "Not addressed")) +
-  theme(legend.position = "bottom") +   
   scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
   scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
   coord_fixed()
@@ -95,7 +166,9 @@ calibration_gs %>%
                   ymax = pmin(empirical_fdr + moe_95, 1))
   ) +
   geom_pointrange(colour = "grey") +
+  geom_point(colour = "black") +
   geom_abline(aes(slope = 1, intercept = 0)) +
+  geom_abline(aes(slope = gold_standard_power, intercept = 1-gold_standard_power), linetype = "dotted") +
   ggtitle("Calibration and confounders") +
   facet_wrap(~gsub("_plus_", "+", gsub("pert_", "", condition_on)), nrow = 1) +
   theme(text = element_text(family = "ArialMT"), legend.position = "bottom") +  
@@ -164,8 +237,8 @@ calibration_gs %>%
   geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
   geom_line(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
-  ggtitle("Calibration by knockoff method") +
-  facet_grid(~address_genetic_perturbations) +  
+  geom_abline(aes(slope = gold_standard_power, intercept = 1-gold_standard_power), linetype = "dotted") +
+  ggtitle("Calibration by knockoff method", subtitle = "Real target genes") +
   scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
   scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
   coord_fixed()
@@ -240,6 +313,7 @@ calibration_gs %>%
   ggplot() +
   geom_line(aes(x = nominal_fdr, y = empirical_fdr, group = seed)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
+  geom_abline(aes(slope = gold_standard_power, intercept = 1-gold_standard_power), linetype = "dotted") +
   ggtitle("Multiple knockoff realizations") +
   scale_y_continuous(limits = 0:1) +
   xlab("Recall") +

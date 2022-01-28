@@ -139,7 +139,7 @@ do_one = function(condition_index){
             n_pc = maybe_n_pc
           }
           confounder_indicators = cbind( pca_results$x[,1:n_pc], perturbations)
-        }
+        } 
       }
 
 

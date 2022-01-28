@@ -108,11 +108,12 @@ cat("\nPrepping data.\n")
   withr::with_dir(
     file.path(DATALAKE, "dream5/DREAM5_network_inference_challenge/Network3"),
     {
-      ecoli_expression     = read.table("input data/net3_expression_data.tsv", header = T)
-      ecoli_metadata       = read.table("input data/net3_chip_features.tsv", header = T, comment.char = "")
-      ecoli_tf             = read.table("input data/net3_transcription_factors.tsv")
-      ecoli_network_dream5 = read.table("gold standard/DREAM5_NetworkInference_GoldStandard_Network3.tsv")
-      ecoli_anonymization  = read.table("anonymization/net3_gene_ids.tsv")
+      ecoli_expression      = read.table("input data/net3_expression_data.tsv", header = T)
+      ecoli_metadata        = read.table("input data/net3_chip_features.tsv", header = T, comment.char = "")
+      ecoli_tf              = read.table("input data/net3_transcription_factors.tsv")
+      ecoli_network_dream5  = read.table("gold standard/DREAM5_NetworkInference_GoldStandard_Network3.tsv")
+      ecoli_dream5_new_test = read.csv("../../DREAM5_ecoli_53_novel_hypotheses.csv", header = T, comment.char = "#")
+      ecoli_anonymization   = read.table("anonymization/net3_gene_ids.tsv")
     }
   )
   # Make a couple useful alterations to metadata
@@ -128,25 +129,34 @@ cat("\nPrepping data.\n")
   ecoli_network_dream5 %<>% dplyr::mutate(Gene2_name = ecoli_anonymization_by_name[Gene2] )
   ecoli_network_dream5$Gene1 = NULL
   ecoli_network_dream5$Gene2 = NULL
+  
+  # Don't worry about capitalization
+  ecoli_dream5_new_test$Gene1_name %<>% toupper
+  ecoli_dream5_new_test$Gene2_name %<>% toupper
 }
 
 cat("\nPrepping alternate gold standards.\n")
 # Load curated interactions from regulonDB v10.9
 {
-  ecoli_network_curated =
-    read.table(sep = "\t",
-               file.path(DATALAKE, "modern_ecoli/regulondb_10.9/full/genetic_network.txt")
-    )  %>%
-    subset(V8=="gene" & V7=="tf") %>%
-    extract(c(2, 4)) %>%
-    set_colnames(c("Gene1_name", "Gene2_name"))
-  ecoli_network_curated[["Gene1_name"]] %<>% toupper
-  ecoli_network_curated[["Gene2_name"]] %<>% toupper
-  dim(ecoli_network_curated)
-  ecoli_network_curated %>%
-    extract2("Gene1_name") %>%
-    table %>%
-    hist(40, main = "TF out-degree", xlab = "Number of targets per TF")
+  tidy_regulondb = function(ecoli_network_regulondb10_9) {
+    ecoli_network_regulondb10_9 %<>%
+      subset(V8=="gene" & V7=="tf") %>%
+      extract(c(2, 4)) %>%
+      set_colnames(c("Gene1_name", "Gene2_name"))
+    ecoli_network_regulondb10_9[["Gene1_name"]] %<>% toupper
+    ecoli_network_regulondb10_9[["Gene2_name"]] %<>% toupper
+    ecoli_network_regulondb10_9
+  }
+  ecoli_network_regulondb10_9 =
+    read.table(
+      sep = "\t",
+      file.path(DATALAKE, "modern_ecoli/regulondb_10.9/full/genetic_network.txt")
+    ) 
+  ecoli_network_regulondb10_9_additional_binding_support =
+    ecoli_network_regulondb10_9 %>%
+    subset(grepl("sequence|binding|SELEX|mutation", ignore.case = T, V6)) %>% # Evidence of direct binding
+    tidy_regulondb
+  ecoli_network_regulondb10_9 %<>% tidy_regulondb
 }
 
 # Load ChIP-seq data from regulonDB v10.9
@@ -273,7 +283,7 @@ check_against_gold_standards = function(DF){
     if(gold_standard_name=="dream5"){
       gold_standard = ecoli_network_dream5
     } else if(gold_standard_name=="curated"){
-      gold_standard = ecoli_network_curated
+      gold_standard = ecoli_network_regulondb10_9
     } else if(gold_standard_name=="chip"){
       gold_standard = ecoli_network_chip
     } else if(gold_standard_name=="chip_augmented"){
@@ -416,3 +426,13 @@ check_against_gold_standards = function(DF){
     })
   }
 }
+
+# How powerful is the ChIP-seq?
+add_totals = function(X, name = "Mean", FUN = colMeans) {
+  totals = t(matrix(FUN(X)))
+  totals %>% 
+    set_colnames(colnames(X)) %>%
+    set_rownames(name) %>%
+    rbind(X)
+}
+
