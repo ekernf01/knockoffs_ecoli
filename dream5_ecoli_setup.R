@@ -227,11 +227,14 @@ cat("\nPrepping alternate gold standards.\n")
   ecoli_network_tu_augmented[["Gene2_name.y"]] = NULL
   doops = duplicated(ecoli_network_tu_augmented[c("Gene1_name","Gene2_name")])
   ecoli_network_tu_augmented = ecoli_network_tu_augmented[!doops, ]
+  ecoli_network_tu_augmented %<>% subset(!is.na(Gene1_name))
   #Gold standard sizes with and without augmentation:
   dim(ecoli_network_chip)
   dim(ecoli_network_tu_augmented)
   table(ecoli_network_chip$Gene1_name) %>% sort
   table(ecoli_network_tu_augmented$Gene1_name) %>% sort
+  get_pairs = function(X) paste(X$Gene1, X$Gene2, sep = "___")
+  stopifnot(length(setdiff(get_pairs(ecoli_network_chip), get_pairs(ecoli_network_tu_augmented)))>0)
 }
 AVAILABLE_GOLD_STANDARDS = c( "dream5", "curated", "chip", "chip_augmented" )
 
