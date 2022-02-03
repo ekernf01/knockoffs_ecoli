@@ -20,6 +20,7 @@ if(!dir.exists(DATALAKE)){
   stop("Datalake not found. Place it in '~/datalake' or Modify `dream5_ecoli_setup.R`.\n")
 }
 
+
 # Set to T to run a fast test of the code with otherwise meaningless results.
 test_mode = F
 
@@ -182,8 +183,21 @@ cat("\nPrepping alternate gold standards.\n")
     data.table::rbindlist() %>%
     set_colnames(schema) %>%
     as.data.frame()
-  # Peaks from Wade et al. 2006 are mostly artifacts. This is debated but I am convinced. :(
-  ecoli_network_chip %<>% subset(`Reference PMID` != 16892065)
+  # MelR regulates MelAB. Missing from RegulonDB but there is high quality data from an included study.
+  # See https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1308901/
+  ecoli_network_chip %<>% rbind(read.csv(row.names = 1, check.names = F, text = 
+    "RegulonDB Dataset Identifier,Dataset Type,Dataset Name,Transcription Factor Name,Effect,Regulated Object,TFBs Absolute genome left position,TFBs Absolute genome right position,DNA sequence,Growth Condition,Reference PMID
+    1,<NA>,TF CHIP,<NA>,MelR,<NA>,MelA,<NA>,<NA>,<NA>,<NA>,16301522
+    2,<NA>,TF CHIP,<NA>,MelR,<NA>,MelB,<NA>,<NA>,<NA>,<NA>,16301522"
+  ))
+  # Filter out some samples
+  ecoli_network_chip_metadata = read.csv(file.path(DATALAKE,"modern_ecoli/regulondb_10.9/table_chip_controls.csv"))
+  ecoli_network_chip %<>% merge(ecoli_network_chip_metadata, by.x = "Reference PMID", by.y = "PMID")
+  ecoli_network_chip %<>% subset( 
+    "keep" == Recommendation |  # keep whole studies
+      mapply(grepl, `Transcription Factor Name`, Recommendation, ignore.case = T) # keep only certain regulators from a couple studies
+  )
+  # Tidy to match other gold standards
   ecoli_network_chip %<>%
     extract(c("Transcription Factor Name", "Regulated Object")) %>%
     set_colnames(c("Gene1_name", "Gene2_name")) %>%
