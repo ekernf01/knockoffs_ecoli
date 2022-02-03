@@ -211,6 +211,29 @@ cat("\nPrepping alternate gold standards.\n")
   ecoli_network_chip$Gene1_name[ecoli_network_chip$Gene1_name=="Cra"    ] = "fruR"
   ecoli_network_chip$Gene1_name[ecoli_network_chip$Gene1_name=="H-NS"   ] = "hns"
   ecoli_network_chip$Gene1_name[ecoli_network_chip$Gene1_name=="IHF"    ] = "ihfA"
+  # Fix some annotations like "WITHIN bcsE" to "bcsE"
+  ecoli_network_chip$Gene2_name %<>% gsub("WITHIN |END OF |PSEUDOGENE|-[0-9]", "", ignore.case = T, .)
+  # Fix multi-gene entries
+  is_ecoli_operon = function(operon){
+    is_lower = function(x) x==tolower(x)
+    is_upper = function(x) x==toupper(x)
+    nchar(operon)>4 && is_lower(substr(operon, 1, 3)) && is_upper(substr(operon, start = 4, stop = nchar(operon)))
+  } 
+  separate_ecoli_operon = function(operon){
+    if(is_ecoli_operon(operon)){
+      prefix = substr(operon, 1, 3)
+      suffixes = substr(operon, start = 4, stop = nchar(operon)) %>% strsplit(split = "") %>% extract2(1)
+      gene_list = paste(paste0(prefix, suffixes), collapse = ",")
+      return(gene_list)
+    } else {
+      return(operon)
+    }
+  }
+  ecoli_network_chip %<>% dplyr::mutate(Gene2_name = sapply(Gene2_name, separate_ecoli_operon))
+  ecoli_network_chip %<>% tidyr::separate_rows(Gene2_name) 
+  # Remove errant suffixes like -1 and -2
+  ecoli_network_chip %<>% subset(nchar(Gene2_name)>=3)
+  ecoli_network_chip$Gene2_name %>% unique %>% setdiff(ecoli_tu[["Gene2_name"]]) %>% unique
   ecoli_network_chip =
     ecoli_network_chip %>%
     subset(Gene1_name=="ihfA") %>%
