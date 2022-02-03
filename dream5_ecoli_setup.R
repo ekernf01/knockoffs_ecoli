@@ -233,7 +233,6 @@ cat("\nPrepping alternate gold standards.\n")
   ecoli_network_chip %<>% tidyr::separate_rows(Gene2_name) 
   # Remove errant suffixes like -1 and -2
   ecoli_network_chip %<>% subset(nchar(Gene2_name)>=3)
-  ecoli_network_chip$Gene2_name %>% unique %>% setdiff(ecoli_tu[["Gene2_name"]]) %>% unique
   ecoli_network_chip =
     ecoli_network_chip %>%
     subset(Gene1_name=="ihfA") %>%
@@ -270,8 +269,6 @@ cat("\nPrepping alternate gold standards.\n")
   dim(ecoli_network_tu_augmented)
   table(ecoli_network_chip$Gene1_name) %>% sort
   table(ecoli_network_tu_augmented$Gene1_name) %>% sort
-  get_pairs = function(X) paste(X$Gene1, X$Gene2, sep = "___")
-  stopifnot(length(setdiff(get_pairs(ecoli_network_chip), get_pairs(ecoli_network_tu_augmented)))>0)
 }
 AVAILABLE_GOLD_STANDARDS = c( "dream5", "curated", "chip", "chip_augmented" )
 
