@@ -288,8 +288,8 @@ do_one = function(condition_index, reuse_results = F){
   })
 }
 
-parallel::mclapply(nrow(conditions):1, do_one, mc.cores = parallel::detectCores())
 
 # # For interactive use, if you only update the gold standards and not the knockoff procedure, 
-# # you can re-run this as below.
-# parallel::mclapply(nrow(conditions):1, do_one, mc.cores = parallel::detectCores(), reuse_results = T)
+# # you can re-run this with "reuse_results = T".
+parallel::mclapply(nrow(conditions):1, do_one, mc.cores = parallel::detectCores())
+

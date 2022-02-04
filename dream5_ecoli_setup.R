@@ -398,8 +398,8 @@ check_against_gold_standards = function(DF){
       write.csv(calibration, ("ecoli_calibration.csv"))
       # Make them smaller; they're ~100MB each
       try({
-        system("gzip results_with_evaluation.csv")
-        system("gzip ecoli_calibration.csv")
+        system("gzip -f results_with_evaluation.csv")
+        system("gzip -f ecoli_calibration.csv")
       })
       # Plot and save calibration
       ggplot(calibration) +

@@ -1,5 +1,6 @@
 #setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v24")
 source("../dream5_ecoli_setup.R")
+fillna =function(x, filler){ x[is.na(x)] = filler; x}
 ggplot2::theme_update(text = element_text(family = "ArialMT"))
 # Collect results to make certain key summary plots
 cat("Loading experimental results and making UMAPs...")
@@ -32,7 +33,7 @@ for(condition_index in nrow(conditions):1){
     for( gold_standard_name in AVAILABLE_GOLD_STANDARDS ){
       i = i + 1
       withr::with_dir(file.path(working_directory, gold_standard_name), {
-        calibration_gs[[i]] = read.csv("ecoli_calibration.csv")
+        calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
         calibration_gs[[i]] %<>% merge(conditions[condition_index,])
         calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
       })
@@ -104,7 +105,7 @@ ggsave("fig_chip_power.svg", width = 5, height = 5)
 
 # Test our best setting using the DREAM5 new results (53 new predictions explicitly tested)
 explicitly_tested = 
-  read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv") %>% 
+  read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv.gz") %>% 
   merge(subset(ecoli_dream5_new_test, is_positive_control=="no"),
         by = c("Gene1_name", "Gene2_name"),
         all.x = F,
@@ -116,12 +117,12 @@ explicitly_tested %>%
 
 # Record the top false positives in the most successful setting
 # For later manual inspection
-read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv") %>%
+read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv.gz") %>%
   subset( !is_confirmed) %>%
   dplyr::arrange(q) %>% 
   write.csv("top_false_positives.csv")
 
-read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/dream5/results_with_evaluation.csv") %>%
+read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/dream5/results_with_evaluation.csv.gz") %>%
   subset(q<0.5) %>% 
   extract2("is_confirmed") %>%
   fillna("unknown") %>%
@@ -140,7 +141,6 @@ calibration_gs %>%
   ggplot() +
   geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = condition_on, shape = condition_on)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
-  geom_abline(aes(slope = gold_standard_power, intercept = 1-gold_standard_power), linetype = "dotted") +
   ggtitle("Calibration and confounders") +
   facet_grid(knockoff_method~ifelse(address_genetic_perturbations, "Knockouts addressed", "Not addressed")) +
   scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
@@ -150,7 +150,6 @@ ggsave("fig_confounders.pdf", width = 6, height = 3)
 ggsave("fig_confounders.svg", width = 6, height = 3)
 
 # same, on confounding, but make a simpler plot with error bars
-fillna =function(x, filler){ x[is.na(x)] = filler; x}
 calibration_gs %>%
   subset( T &
             gold_standard_name=="chip_augmented" &
@@ -168,7 +167,6 @@ calibration_gs %>%
   geom_pointrange(colour = "grey") +
   geom_point(colour = "black") +
   geom_abline(aes(slope = 1, intercept = 0)) +
-  geom_abline(aes(slope = gold_standard_power, intercept = 1-gold_standard_power), linetype = "dotted") +
   ggtitle("Calibration and confounders") +
   facet_wrap(~gsub("_plus_", "+", gsub("pert_", "", condition_on)), nrow = 1) +
   theme(text = element_text(family = "ArialMT"), legend.position = "bottom") +  
@@ -237,7 +235,6 @@ calibration_gs %>%
   geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
   geom_line(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
-  geom_abline(aes(slope = gold_standard_power, intercept = 1-gold_standard_power), linetype = "dotted") +
   ggtitle("Calibration by knockoff method", subtitle = "Real target genes") +
   scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
   scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
@@ -313,7 +310,6 @@ calibration_gs %>%
   ggplot() +
   geom_line(aes(x = nominal_fdr, y = empirical_fdr, group = seed)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
-  geom_abline(aes(slope = gold_standard_power, intercept = 1-gold_standard_power), linetype = "dotted") +
   ggtitle("Multiple knockoff realizations") +
   scale_y_continuous(limits = 0:1) +
   xlab("Recall") +
