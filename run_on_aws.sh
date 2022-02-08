@@ -33,7 +33,7 @@ git clone https://github.com/ekernf01/rlookc.git
 cd knockoffs_ecoli
 
 # Change this if you want to run a new set of conditions
-mkdir v26 && cd v26
+mkdir v27 && cd v27
 
 # Install some R packages
 Rscript ../dream5_ecoli_install.R
@@ -45,4 +45,4 @@ Rscript ../dream5_ecoli_plots.R
 # export results 
 aws s3 sync .. s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli
 # # Then, on laptop:
-# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v26 v26
+# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v27 v27
