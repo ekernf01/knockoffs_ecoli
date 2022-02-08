@@ -3,6 +3,8 @@ suppressPackageStartupMessages({
   library("ggplot2")
   library("magrittr")
   library("glasso")
+  library("limma")
+  
 })
 set.seed(0)
 sink("sessionInfo.txt")
@@ -21,7 +23,8 @@ if(!dir.exists(DATALAKE)){
 }
 
 
-# Set to T to run a fast test of the code with otherwise meaningless results.
+# Set to T to run a fast test of the code. Results will not be biologically 
+# meaningful; this is for software testing. 
 test_mode = F
 
 # We'll run several experiments with different handling of perturbations,
@@ -53,7 +56,7 @@ conditions = rbind(
   ),
   # study confounder handling
   expand.grid(
-    knockoff_type = c("sample", "mixture"),
+    knockoff_type = c("sample"),
     address_genetic_perturbations = c( F, T ),
     condition_on = c(  "none",
                        "pert_labels",
@@ -136,7 +139,56 @@ cat("\nPrepping data.\n")
   ecoli_dream5_new_test$Gene2_name %<>% toupper
 }
 
-cat("\nPrepping alternate gold standards.\n")
+cat("\nPrepping knockout-based gold standard.\n")
+{
+  ecoli_metadata = ecoli_metadata %>% 
+    dplyr::group_by(X.Experiment) %>% 
+    dplyr::summarise(
+      HasControl = any( is.na(DeletedGenes)), 
+      HasKO = any(!is.na(DeletedGenes)),
+      HasReplication = max(Repeat)>1, 
+      HasNoKnownConfounding = length(unique(Perturbations))==1 
+    ) %>%
+    merge(ecoli_metadata, ., all.x = T) %>% 
+    dplyr::mutate(HasKO = !is.na(HasKO) & HasKO) %>% 
+    dplyr::mutate(HasControl = !is.na(HasControl) & HasControl) %>% 
+    dplyr::mutate(DeletedGenesNoNA = ifelse(is.na(DeletedGenes), "", DeletedGenes)) 
+  ecoli_network_ko = list()
+  for(e in unique(subset(ecoli_metadata, HasKO & HasControl & HasReplication & HasNoKnownConfounding, select = "X.Experiment", drop = T))){
+    current_expression =    t(ecoli_expression[ecoli_metadata$X.Experiment==e,])
+    current_metadata =
+      ecoli_metadata %>%
+      subset(X.Experiment==e) %>%
+      dplyr::mutate(DeletedGenesNoNA = factor(DeletedGenesNoNA, levels = sort(unique(DeletedGenesNoNA))) )
+    design.trt=model.matrix(~DeletedGenesNoNA, data = current_metadata)
+    fitTrtMean <- lmFit(current_expression, design.trt)
+    fit.contrast=contrasts.fit(fitTrtMean, coefficients = colnames(design.trt)[-1])
+    efit.contrast=eBayes(fit.contrast)
+    ecoli_network_ko[[as.character(e)]] = 
+      efit.contrast$p.value %>%
+      as.data.frame() %>%
+      dplyr::add_rownames(var = "Gene2_name") %>%
+      tidyr::pivot_longer(cols = !Gene2_name, 
+                          names_prefix = "DeletedGenesNoNA",
+                          names_to = "Gene1_name", 
+                          values_to = "p_value_KO") %>%
+      mutate(X.Experiment = e)
+  }
+  ecoli_network_ko %<>% data.table::rbindlist()
+  ecoli_network_ko = ecoli_network_ko[,c("Gene1_name", "Gene2_name", "p_value_KO", "X.Experiment")]
+  ecoli_network_ko %<>% subset(!grepl(",", Gene1_name)) #Ignore double knockouts for now
+  ecoli_network_ko$q_value_KO = p.adjust(ecoli_network_ko$p_value_KO, method = "fdr")
+  ecoli_network_ko$Gene1_name = ecoli_anonymization_by_name[ecoli_network_ko$Gene1_name] %>% toupper
+  ecoli_network_ko$Gene2_name = ecoli_anonymization_by_name[ecoli_network_ko$Gene2_name] %>% toupper
+  ecoli_network_ko %>% 
+    mutate(targetIsDecoy = grepl("DECOY", Gene2_name)) %>%
+    ggplot()  +
+    geom_histogram(aes(x = p_value_KO, fill = targetIsDecoy), bins = 100)  + 
+    facet_wrap(~targetIsDecoy, ncol = 1, scales = "free_y") +
+    ggtitle( "Decoy gene differential expression")
+}
+
+cat("\nPrepping ChIP gold standard.\n")
 # Load curated interactions from regulonDB v10.9
 {
   tidy_regulondb = function(ecoli_network_regulondb10_9) {
@@ -270,7 +322,7 @@ cat("\nPrepping alternate gold standards.\n")
   table(ecoli_network_chip$Gene1_name) %>% sort
   table(ecoli_network_tu_augmented$Gene1_name) %>% sort
 }
-AVAILABLE_GOLD_STANDARDS = c( "dream5", "curated", "chip", "chip_augmented" )
+AVAILABLE_GOLD_STANDARDS = c( "dream5", "curated", "chip", "chip_augmented", "knockout" )
 
 # Check out the expression data briefly
 ecoli_expression[1:4, 1:4]
@@ -319,6 +371,8 @@ check_against_gold_standards = function(DF){
   for( gold_standard_name in AVAILABLE_GOLD_STANDARDS ){
     if(gold_standard_name=="dream5"){
       gold_standard = ecoli_network_dream5
+    } else if(gold_standard_name=="knockout"){
+      gold_standard = ecoli_network_ko
     } else if(gold_standard_name=="curated"){
       gold_standard = ecoli_network_regulondb10_9
     } else if(gold_standard_name=="chip"){
