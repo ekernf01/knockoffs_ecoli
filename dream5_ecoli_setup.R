@@ -1,3 +1,4 @@
+# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v26/")
 suppressPackageStartupMessages({
   library("dplyr")
   library("ggplot2")
@@ -116,10 +117,11 @@ cat("\nPrepping data.\n")
       ecoli_metadata        = read.table("input data/net3_chip_features.tsv", header = T, comment.char = "")
       ecoli_tf              = read.table("input data/net3_transcription_factors.tsv")
       ecoli_network_dream5  = read.table("gold standard/DREAM5_NetworkInference_GoldStandard_Network3.tsv")
-      ecoli_dream5_new_test = read.csv("../../DREAM5_ecoli_53_novel_hypotheses.csv", header = T, comment.char = "#")
       ecoli_anonymization   = read.table("anonymization/net3_gene_ids.tsv")
     }
   )
+  ecoli_dream5_new_test = read.csv("../DREAM5_ecoli_53_novel_hypotheses.csv", header = T, comment.char = "#")
+  
   # Make a couple useful alterations to metadata
   ecoli_metadata$Time_Rank = ave(ecoli_metadata$Time, ecoli_metadata$X.Experiment,
                                  FUN = function(x) rank(x, na.last = "keep")/max(rank(x)) )
