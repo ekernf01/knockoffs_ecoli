@@ -295,7 +295,6 @@ do_one = function(condition_index, omit_knockout_evaluation_samples = F, reuse_r
         check_against_gold_standards(DF)
       })
     )
-    
     sink()
   })
 }
@@ -303,6 +302,5 @@ do_one = function(condition_index, omit_knockout_evaluation_samples = F, reuse_r
 
 # # For interactive use, if you only update the gold standards and not the knockoff procedure, 
 # # you can re-run this with "reuse_results = T".
-parallel::mclapply(nrow(conditions):1, do_one, omit_knockout_evaluation_samples = F, mc.cores = parallel::detectCores())
-parallel::mclapply(nrow(conditions):1, do_one, omit_knockout_evaluation_samples = T, mc.cores = parallel::detectCores())
-
+parallel::mclapply(nrow(conditions):1, do_one, omit_knockout_evaluation_samples = F, reuse_results = T, mc.cores = parallel::detectCores())
+parallel::mclapply(nrow(conditions):1, do_one, omit_knockout_evaluation_samples = T, reuse_results = T, mc.cores = parallel::detectCores())

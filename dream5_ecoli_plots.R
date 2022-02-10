@@ -1,4 +1,4 @@
-#setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v24")
+#setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v27")
 source("../dream5_ecoli_setup.R")
 fillna =function(x, filler){ x[is.na(x)] = filler; x}
 ggplot2::theme_update(text = element_text(family = "ArialMT"))
@@ -7,38 +7,44 @@ cat("Loading experimental results and making UMAPs...")
 conditions_with_summaries = conditions = read.csv("experiments_to_run.csv", row.names = 1)
 exchangeability = umaps = knockoffs = calibration_sim = calibration_gs = list()
 i = 0
-for(condition_index in nrow(conditions):1){
-  try({
-    write.table(conditions[condition_index,], sep = "\t", quote = F)
-    attach(conditions[condition_index,], warn.conflicts = F)
-    working_directory = ""
-    for(j in seq_along(conditions[condition_index,])){
-      prefix = paste0( colnames(conditions)[[j]], "=", conditions[condition_index, j] )
-      working_directory %<>% file.path(prefix, .)
-    }
-    # Check out the knockoffs via UMAP and KNN exchangeability test
-    withr::with_dir(working_directory, {
-      knockoffs[[condition_index]] = read.csv("knockoffs.csv", row.names = 1)
-      exchangeability[[condition_index]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])
-      conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
-      conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
-      umaps[[condition_index]] = umap::umap(knockoffs[[condition_index]], random.state = 0) %>% extract2("layout")
-      calibration_sim[[condition_index]] = read.csv("average_case_calibration.csv", row.names = 1) %>%
-        colMeans %>%
-        (function(x) data.frame(nominal_fdr = gsub("^X", "", names(x)) %>% as.numeric, empirical_fdr = x))
-    })
-    umaps[[condition_index]]           %<>% merge(conditions[condition_index,])
-    calibration_sim[[condition_index]] %<>% merge(conditions[condition_index,])
-    # check vs various gold standards
-    for( gold_standard_name in AVAILABLE_GOLD_STANDARDS ){
-      i = i + 1
-      withr::with_dir(file.path(working_directory, gold_standard_name), {
-        calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
-        calibration_gs[[i]] %<>% merge(conditions[condition_index,])
-        calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
+for(omit_knockout_evaluation_samples in c(T, F)){
+  for(condition_index in nrow(conditions):1){
+    try({
+      conditions$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
+      offset = omit_knockout_evaluation_samples*nrow(conditions)
+      write.table(conditions[condition_index,], sep = "\t", quote = F)
+      attach(conditions[condition_index,], warn.conflicts = F)
+      working_directory = ""
+      for(j in seq_along(conditions[condition_index,])){
+        prefix = paste0( colnames(conditions)[[j]], "=", conditions[condition_index, j] )
+        working_directory %<>% file.path(prefix, .)
+      }
+      # Check out the knockoffs via UMAP and KNN exchangeability test
+      withr::with_dir(working_directory, {
+        knockoffs[[condition_index + offset]] = read.csv("knockoffs.csv", row.names = 1)
+        try(silent = T,
+          {exchangeability[[condition_index + offset]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])}
+        )
+        conditions_with_summaries[condition_index + offset, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
+        conditions_with_summaries[condition_index + offset, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
+        umaps[[condition_index + offset]] = umap::umap(knockoffs[[condition_index + offset]], random.state = 0) %>% extract2("layout")
+        calibration_sim[[condition_index + offset]] = read.csv("average_case_calibration.csv", row.names = 1) %>%
+          colMeans %>%
+          (function(x) data.frame(nominal_fdr = gsub("^X", "", names(x)) %>% as.numeric, empirical_fdr = x))
       })
-    }
-  })
+      umaps[[condition_index + offset]]           %<>% merge(conditions[condition_index,])
+      calibration_sim[[condition_index + offset]] %<>% merge(conditions[condition_index,])
+      # check vs various gold standards
+      for( gold_standard_name in AVAILABLE_GOLD_STANDARDS ){
+        i = i + 1
+        withr::with_dir(file.path(working_directory, gold_standard_name), {
+          calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
+          calibration_gs[[i]] %<>% merge(conditions[condition_index,])
+          calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
+        })
+      }
+    })
+  }
 }
 umaps %<>% data.table::rbindlist()
 calibration_gs %<>% data.table::rbindlist()
@@ -47,8 +53,8 @@ conditions_with_summaries %<>% mutate( knockoff_method = paste0(knockoff_type, "
 umaps %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_gs %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_sim %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
-
-# Check how well ChIP data capture known stuff from regulonDB
+  
+  # Check how well ChIP data capture known stuff from regulonDB
 check_chip_power = function( regulon_network, 
                              regulon_network_name = deparse(substitute(regulon_network)),
                              chip_network, 
@@ -105,7 +111,7 @@ ggsave("fig_chip_power.svg", width = 5, height = 5)
 
 # Test our best setting using the DREAM5 new results (53 new predictions explicitly tested)
 explicitly_tested = 
-  read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv.gz") %>% 
+  read.csv("omit_knockout_evaluation_samples=FALSE/seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/results_with_evaluation.csv.gz") %>% 
   merge(subset(ecoli_dream5_new_test, is_positive_control=="no"),
         by = c("Gene1_name", "Gene2_name"),
         all.x = F,

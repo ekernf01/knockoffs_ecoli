@@ -1,4 +1,4 @@
-# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v26/")
+# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v27/")
 suppressPackageStartupMessages({
   library("dplyr")
   library("ggplot2")
@@ -182,10 +182,11 @@ cat("\nPrepping knockout-based gold standard.\n")
   ecoli_network_ko$q_value_KO = p.adjust(ecoli_network_ko$p_value_KO, method = "fdr")
   ecoli_network_ko$Gene1_name = ecoli_anonymization_by_name[ecoli_network_ko$Gene1_name] %>% toupper
   ecoli_network_ko$Gene2_name = ecoli_anonymization_by_name[ecoli_network_ko$Gene2_name] %>% toupper
+  ecoli_network_ko$is_confirmed = ecoli_network_ko$q_value_KO < 0.05
   ecoli_network_ko %>% 
     mutate(targetIsDecoy = grepl("DECOY", Gene2_name)) %>%
     ggplot()  +
-    geom_histogram(aes(x = p_value_KO, fill = targetIsDecoy), bins = 100)  + 
+    geom_histogram(aes(x = q_value_KO, fill = targetIsDecoy), bins = 100)  + 
     facet_wrap(~targetIsDecoy, ncol = 1, scales = "free_y") +
     ggtitle( "Decoy gene differential expression")
 }
@@ -371,6 +372,7 @@ try({
 # This will be used later to check the results.
 check_against_gold_standards = function(DF){
   for( gold_standard_name in AVAILABLE_GOLD_STANDARDS ){
+    cat("Evaluating against ", gold_standard_name, " gold standard\n")
     if(gold_standard_name=="dream5"){
       gold_standard = ecoli_network_dream5
     } else if(gold_standard_name=="knockout"){
@@ -384,7 +386,7 @@ check_against_gold_standards = function(DF){
     } else {
       stop("Gold standard by that name not found.\n")
     }
-    gold_standard = gold_standard[c("Gene1_name", "Gene2_name")]
+    gold_standard = gold_standard[,c("Gene1_name", "Gene2_name")]
     gold_standard[["is_confirmed"]] = T
     dir.create(gold_standard_name, recursive = T, showWarnings = F)
     withr::with_dir(gold_standard_name, {
@@ -404,16 +406,18 @@ check_against_gold_standards = function(DF){
     gold_standard_symmetric = rbind(gold_standard, gold_standard_reversed)
     # If forwards is true and backwards is false, keep only the trues in both directions.
     gold_standard_symmetric %<>% dplyr::arrange(desc(is_confirmed))
-    gold_standard_symmetric = gold_standard_symmetric[!duplicated(gold_standard_symmetric$Gene1,
-                                                                  gold_standard_symmetric$Gene2),]
+    gold_standard_symmetric = gold_standard_symmetric[!duplicated(gold_standard_symmetric$Gene1_name,
+                                                                  gold_standard_symmetric$Gene2_name),]
     # This makes true edges correct; the rest is NA and fails to distinguish between
     # unknowns and known negatives.
     DF_plus_gs = merge(DF, gold_standard_symmetric, by = c("Gene1_name", "Gene2_name"), all.x = T, all.y = F)
     # This treats everything as a known negative.
-    DF_plus_gs[["is_confirmed"]][is.na(DF_plus_gs[["is_confirmed"]])] = F
-    # In ChIP data, we can distinguish between unknowns (not chipped) and known
-    # negatives (chipped and not bound).
-    if(grepl("chip", gold_standard_name)){
+    if(any(is.na(DF_plus_gs[["is_confirmed"]]))){
+      DF_plus_gs[["is_confirmed"]][is.na(DF_plus_gs[["is_confirmed"]])] = F
+    }
+    # In ChIP data and KO+microarray experiments, we can distinguish between unknowns (not assayed) and known
+    # negatives (assayed and not found).
+    if(grepl("chip|ko", gold_standard_name)){
       DF_plus_gs[["is_confirmed"]][ !( DF_plus_gs[["Gene1_name"]] %in% gold_standard[["Gene1_name"]] ) ] = NA
     }
     # Omit edges where that target gene is NEVER present in the gold standard.

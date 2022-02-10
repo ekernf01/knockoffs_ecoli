@@ -5,7 +5,7 @@
 
 # Retrieve the ecoli demo repo
 git clone https://github.com/ekernf01/knockoffs_ecoli.git
-# Run it all at once
+# Run the rest all at once
 # source knockoffs_ecoli/run_on_aws.sh
 
 # Install aws cli, build-essential, git, and R v4
@@ -37,7 +37,7 @@ mkdir v27 && cd v27
 
 # Install some R packages
 Rscript ../dream5_ecoli_install.R
-Rscript ../dream5_ecoli_install.R # it needs to refresh for some reason
+Rscript ../dream5_ecoli_install.R # it needs to refresh for some reason. Don't worry if you see "no package called versions"; that resolves the second time.
 # Run tests. 
 nohup Rscript ../dream5_ecoli.R 
 # Mop up (easy to run this locally too to refine plots)
