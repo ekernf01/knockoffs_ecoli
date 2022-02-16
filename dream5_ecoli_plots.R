@@ -105,16 +105,16 @@ chip_power = Reduce(rbind, list(
   
   check_chip_power(regulon_network = ecoli_networks$regulondb10_9,
                    regulon_network_name = "RegulonDB 10.9 full",
-                   chip_network = ecoli_networks$tu_augmented, 
+                   chip_network = ecoli_networks$chip_tu_augmented, 
                    chip_network_name = "ChIP with TU \naugmentation"),
   
   check_chip_power(regulon_network = ecoli_networks$regulondb10_9_additional_binding_support,
                    regulon_network_name = "RegulonDB 10.9 filtered \nfor additional binding support",
-                   chip_network = ecoli_networks$tu_augmented, 
+                   chip_network = ecoli_networks$chip_tu_augmented, 
                    chip_network_name = "ChIP with TU \naugmentation"),
   check_chip_power(regulon_network = ecoli_networks$knockout,
                    regulon_network_name = "Knockout-based",
-                   chip_network = ecoli_networks$tu_augmented, 
+                   chip_network = ecoli_networks$chip_tu_augmented, 
                    chip_network_name = "ChIP with TU \naugmentation"),
   check_chip_power(regulon_network = ecoli_networks$knockout,
                    regulon_network_name = "Knockout-based",
@@ -122,7 +122,7 @@ chip_power = Reduce(rbind, list(
                    chip_network_name = "ChIP"),
   check_chip_power(regulon_network = ecoli_networks$knockout,
                    regulon_network_name = "Knockout-based",
-                   chip_network = ecoli_networks$tu_augmented, 
+                   chip_network = ecoli_networks$chip_tu_augmented, 
                    chip_network_name = "ChIP with TU \naugmentation")
 ))
 ggplot(chip_power) + 

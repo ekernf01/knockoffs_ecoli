@@ -192,11 +192,14 @@ cat("\nPrepping knockout-based gold standard.\n")
   ecoli_networks$knockout %<>% data.table::rbindlist()
   ecoli_networks$knockout = ecoli_networks$knockout[,c("Gene1_name", "Gene2_name", "p_value_KO", "X.Experiment")]
   ecoli_networks$knockout %<>% subset(!grepl(",", Gene1_name)) #Ignore double knockouts for now
-  ecoli_networks$knockout$q_value_KO = p.adjust(ecoli_networks$knockout$p_value_KO, method = "fdr")
   ecoli_networks$knockout$Gene1_name = ecoli_anonymization_by_name[ecoli_networks$knockout$Gene1_name] %>% toupper
   ecoli_networks$knockout$Gene2_name = ecoli_anonymization_by_name[ecoli_networks$knockout$Gene2_name] %>% toupper
-  ecoli_networks$knockout %>% 
-    mutate(targetIsDecoy = grepl("DECOY", Gene2_name)) %>%
+  ecoli_networks$knockout %<>% 
+    group_by(Gene1_name, Gene2_name) %>% 
+    summarize(p_value_KO = poolr::fisher(p_value_KO)$p)
+  ecoli_networks$knockout$q_value_KO = p.adjust(ecoli_networks$knockout$p_value_KO, method = "fdr")
+  ecoli_networks$knockout %<>% mutate(targetIsDecoy = grepl("DECOY", Gene2_name))
+  ecoli_networks$knockout %>%
     ggplot()  +
     geom_histogram(aes(x = p_value_KO), bins = 100)  + 
     facet_wrap(~ifelse(targetIsDecoy, "Decoy", "Gene"), ncol = 1, scales = "free_y") +
@@ -207,6 +210,7 @@ cat("\nPrepping knockout-based gold standard.\n")
   ecoli_networks$knockout$is_confirmed = NA
   ecoli_networks$knockout$is_confirmed[ecoli_networks$knockout$q_value_KO < 0.05] = T
   ecoli_networks$knockout %<>% subset(!is.na(is_confirmed))
+  ecoli_networks$knockout %<>% subset(!targetIsDecoy)
 }
 
 cat("\nPrepping regulonDB 10.9 gold standard.\n")
@@ -319,7 +323,7 @@ cat("\nPrepping ChIP gold standard.\n")
 }
 
 # Augment the ChIP benchmark with all genes of any targeted transcription unit.
-{
+augment_gold_standard = function(gold_standard){
   ecoli_tu = readr::read_delim(
     file.path(DATALAKE, "modern_ecoli/transcription_units/All_transcription_units_of_E._coli_K-12_substr._MG1655.txt"),
     delim = "\t", col_types = readr::cols()
@@ -331,21 +335,27 @@ cat("\nPrepping ChIP gold standard.\n")
   # Tricky pair of merges here.
   # 1. Add the transcription unit for each target gene
   # 2. Add the other target genes for each transcription unit
-  ecoli_networks$tu_augmented = merge(ecoli_networks$chip, ecoli_tu, by = "Gene2_name", all.x = T)
-  ecoli_networks$tu_augmented = merge(ecoli_networks$tu_augmented, ecoli_tu, by = "Transcription-Units", all.y = T)
-  ecoli_networks$tu_augmented %<>% dplyr::mutate(not_in_original = Gene2_name.x != Gene2_name.y)
-  ecoli_networks$tu_augmented[["Gene2_name"]] = ecoli_networks$tu_augmented[["Gene2_name.y"]]
-  ecoli_networks$tu_augmented[["Gene2_name.x"]] = NULL
-  ecoli_networks$tu_augmented[["Gene2_name.y"]] = NULL
-  doops = duplicated(ecoli_networks$tu_augmented[c("Gene1_name","Gene2_name")])
-  ecoli_networks$tu_augmented = ecoli_networks$tu_augmented[!doops, ]
-  ecoli_networks$tu_augmented %<>% subset(!is.na(Gene1_name))
-  #Gold standard sizes with and without augmentation:
-  dim(ecoli_networks$chip)
-  dim(ecoli_networks$tu_augmented)
-  table(ecoli_networks$chip$Gene1_name) %>% sort
-  table(ecoli_networks$tu_augmented$Gene1_name) %>% sort
+  gold_standard_augmented = merge(gold_standard, ecoli_tu, by = "Gene2_name", all.x = T)
+  gold_standard_augmented = merge(gold_standard_augmented, ecoli_tu, by = "Transcription-Units", all.y = T)
+  gold_standard_augmented %<>% dplyr::mutate(not_in_original = Gene2_name.x != Gene2_name.y)
+  gold_standard_augmented[["Gene2_name"]] = gold_standard_augmented[["Gene2_name.y"]]
+  gold_standard_augmented[["Gene2_name.x"]] = NULL
+  gold_standard_augmented[["Gene2_name.y"]] = NULL
+  doops = duplicated(gold_standard_augmented[c("Gene1_name","Gene2_name")])
+  gold_standard_augmented = gold_standard_augmented[!doops, ]
+  gold_standard_augmented %<>% subset(!is.na(Gene1_name))
+  
+  # Notify user of augmentation effects
+  cat("Dimensions and out-degrees before and after augmentation:\n")
+  dim(gold_standard) %>% cat("\n")
+  dim(gold_standard_augmented) %>% cat("\n")
+  table(gold_standard$Gene1_name) %>% sort %>% print
+  table(gold_standard_augmented$Gene1_name) %>% sort %>% print
+
+  gold_standard_augmented
 }
+ecoli_networks$chip_tu_augmented = augment_gold_standard(ecoli_networks$chip)
+ecoli_networks$knockout_tu_augmented = augment_gold_standard(gold_standard = ecoli_networks$knockout)
 
 # Check out the expression data briefly
 ecoli_expression[1:4, 1:4]
@@ -389,26 +399,39 @@ try({
   ggsave("genetic_perturbations.pdf", width = 6, height = 6)
 })
 
+
+# Take a network derived from high-throughput data
+# and fill in negatives, assuming rigidly that "all
+# targets would have been detected."
+#
+# There's one exception. We omit edges where that target gene is NEVER present in the gold standard.
+# This could be viewed as overly generous to us but it makes sense if there are naming inconsistencies.
+add_negatives = function(DF, possible_targets = unique(DF$Gene2_name)){
+  negatives = expand.grid(
+    Gene1_name = unique(DF[["Gene1_name"]]), 
+    Gene2_name = unique(possible_targets)
+  )
+  DF %<>% merge(negatives)
+  DF[["is_confirmed"]][is.na(DF[["is_confirmed"]])] = F
+  DF
+}
+
 # This will be used later to check the results.
 check_against_gold_standards = function(DF){
   for( gold_standard_name in names(ecoli_networks) ){
+    # Check gold standard and set things up
     cat("Evaluating against ", gold_standard_name, " gold standard\n")
     gold_standard = ecoli_networks[[gold_standard_name]]
     stopifnot(all(c("Gene1_name", "Gene2_name", "is_confirmed") %in% colnames(gold_standard)))
     stopifnot("Missing values in gold standards are not allowed."=!any(is.na(gold_standard$is_confirmed)))
     gold_standard = gold_standard[,c("Gene1_name", "Gene2_name", "is_confirmed")]
     dir.create(gold_standard_name, recursive = T, showWarnings = F)
-    withr::with_dir(gold_standard_name, {
-      # Show degree distribution of gold standard
-      gold_standard %>%
-        extract2("Gene1_name") %>%
-        table %>%
-        hist(40, main = "TF promiscuity", xlab = "Number of targets per TF")
-      gold_standard %>%
-        extract2("Gene2_name") %>%
-        table %>%
-        hist(main = "Target promiscuity", xlab = "Number of TFs per target")
-    })
+    
+    # In ChIP data and KO+microarray experiments, add known negatives.
+    if(grepl("knockout|ko|chip|chip_tu_augmented", gold_standard_name)){
+      gold_standard %<>% add_negatives()
+    }
+    
     # Include forwards & backwards edges -- we don't expect to get the directionality right here.
     gold_standard_reversed = gold_standard
     gold_standard_reversed[1:2] = gold_standard[2:1]
@@ -417,24 +440,8 @@ check_against_gold_standards = function(DF){
     gold_standard_symmetric %<>% dplyr::arrange(desc(is_confirmed))
     gold_standard_symmetric = gold_standard_symmetric[!duplicated(gold_standard_symmetric$Gene1_name,
                                                                   gold_standard_symmetric$Gene2_name),]
-    # This merge makes true edges correct, but the rest is filled with NA's and fails to distinguish between
-    # unknowns and known negatives. This is addressed below.
+    # This merge correctly maintains explicit positives and negatives. The rest is filled with NA's.
     DF_plus_gs = merge(DF, gold_standard_symmetric, by = c("Gene1_name", "Gene2_name"), all.x = T, all.y = F)
-    # This treats everything not present as a known negative.
-    if(any(is.na(DF_plus_gs[["is_confirmed"]]))){
-      DF_plus_gs[["is_confirmed"]][is.na(DF_plus_gs[["is_confirmed"]])] = F
-    }
-    # In ChIP data and KO+microarray experiments, we can distinguish between unknowns (not assayed) and known
-    # negatives (assayed and not found).
-    if(grepl("knockout|ko|chip|tu_augmented", gold_standard_name)){
-      DF_plus_gs[["is_confirmed"]][ !( DF_plus_gs[["Gene1_name"]] %in% gold_standard[["Gene1_name"]] ) ] = NA
-    }
-    # Omit edges where that target gene is NEVER present in the gold standard.
-    # This could be viewed as overly generous to us but it makes sense if there are naming inconsistencies.
-    DF_plus_gs[["is_confirmed"]][ !( DF_plus_gs[["Gene2_name"]] %in% gold_standard[["Gene2_name"]] ) ] = NA
-    DF_plus_gs[["is_confirmed"]] %>% table
-    DF_plus_gs[["is_confirmed"]] %>% is.na %>% table
-    dim(DF_plus_gs)
 
     # Compute calibration vs gold standard
     {
