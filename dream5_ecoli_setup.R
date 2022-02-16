@@ -30,60 +30,61 @@ test_mode = F
 
 # We'll run several experiments with different handling of perturbations,
 # confounding influences, and knockoff construction.
-conditions = rbind(
-  # study random variation in knockoff construction
-  expand.grid(
-    knockoff_type = c("sample"),
-    address_genetic_perturbations = c( F ),
-    condition_on = c( "none" ),
-    shrinkage_param = NA,
-    seed = 2:5
-  ),
-  # study knockoff generation methods
-  expand.grid(
-    knockoff_type = c("naive", "shrinkage", "mixture"),
-    address_genetic_perturbations = c( F ),
-    condition_on = c( "none"),
-    shrinkage_param = NA,
-    seed = 1
-  ),
-  # study other knockoff generation methods
-  expand.grid(
-    knockoff_type = c( "glasso"),
-    address_genetic_perturbations = c( F ),
-    condition_on = c( "none"),
-    shrinkage_param = c(0.1, 0.01, 0.001),
-    seed = 1
-  ),
-  # study confounder handling
-  expand.grid(
-    knockoff_type = c("sample"),
-    address_genetic_perturbations = c( F, T ),
-    condition_on = c(  "none",
-                       "pert_labels",
-                       "pert_labels_plus_pca10",
-                       "pert_labels_plus_pca20",
-                       "pert_labels_plus_pca30",
-                       "pert_labels_plus_pca50" ),
-    shrinkage_param = NA,
-    seed = 1
-  ),
-  # study confounder handling
-  expand.grid(
-    knockoff_type = c("glasso"),
-    address_genetic_perturbations = c( F, T ),
-    condition_on = c(  "none",
-                       "pert_labels",
-                       "pert_labels_plus_pca10",
-                       "pert_labels_plus_pca20",
-                       "pert_labels_plus_pca30",
-                       "pert_labels_plus_pca50" ),
-    shrinkage_param = 0.001,
-    seed = 1
+{
+  conditions = rbind(
+    # study random variation in knockoff construction
+    expand.grid(
+      knockoff_type = c("sample"),
+      address_genetic_perturbations = c( F ),
+      condition_on = c( "none" ),
+      shrinkage_param = NA,
+      seed = 2:5
+    ),
+    # study knockoff generation methods
+    expand.grid(
+      knockoff_type = c("naive", "shrinkage", "mixture"),
+      address_genetic_perturbations = c( F ),
+      condition_on = c( "none"),
+      shrinkage_param = NA,
+      seed = 1
+    ),
+    # study other knockoff generation methods
+    expand.grid(
+      knockoff_type = c( "glasso"),
+      address_genetic_perturbations = c( F ),
+      condition_on = c( "none"),
+      shrinkage_param = c(0.1, 0.01, 0.001),
+      seed = 1
+    ),
+    # study confounder handling
+    expand.grid(
+      knockoff_type = c("sample"),
+      address_genetic_perturbations = c( F, T ),
+      condition_on = c(  "none",
+                         "pert_labels",
+                         "pert_labels_plus_pca10",
+                         "pert_labels_plus_pca20",
+                         "pert_labels_plus_pca30",
+                         "pert_labels_plus_pca50" ),
+      shrinkage_param = NA,
+      seed = 1
+    ),
+    # study confounder handling
+    expand.grid(
+      knockoff_type = c("glasso"),
+      address_genetic_perturbations = c( F, T ),
+      condition_on = c(  "none",
+                         "pert_labels",
+                         "pert_labels_plus_pca10",
+                         "pert_labels_plus_pca20",
+                         "pert_labels_plus_pca30",
+                         "pert_labels_plus_pca50" ),
+      shrinkage_param = 0.001,
+      seed = 1
+    )
   )
-)
-write.csv(conditions, "experiments_to_run.csv")
-
+  write.csv(conditions, "experiments_to_run.csv")
+}
 
 if(test_mode){
   # return random results for fast testing of the code
@@ -109,6 +110,7 @@ if(test_mode){
 
 # Load data
 cat("\nPrepping data.\n")
+ecoli_networks = list()
 {
   withr::with_dir(
     file.path(DATALAKE, "dream5/DREAM5_network_inference_challenge/Network3"),
@@ -116,33 +118,43 @@ cat("\nPrepping data.\n")
       ecoli_expression      = read.table("input data/net3_expression_data.tsv", header = T)
       ecoli_metadata        = read.table("input data/net3_chip_features.tsv", header = T, comment.char = "")
       ecoli_tf              = read.table("input data/net3_transcription_factors.tsv")
-      ecoli_network_dream5  = read.table("gold standard/DREAM5_NetworkInference_GoldStandard_Network3.tsv")
+      ecoli_networks$dream5 = read.table("gold standard/DREAM5_NetworkInference_GoldStandard_Network3.tsv")
       ecoli_anonymization   = read.table("anonymization/net3_gene_ids.tsv")
     }
   )
-  ecoli_dream5_new_test = read.csv("../DREAM5_ecoli_53_novel_hypotheses.csv", header = T, comment.char = "#")
-  
   # Make a couple useful alterations to metadata
   ecoli_metadata$Time_Rank = ave(ecoli_metadata$Time, ecoli_metadata$X.Experiment,
                                  FUN = function(x) rank(x, na.last = "keep")/max(rank(x)) )
   ecoli_metadata$Perturbations[is.na(ecoli_metadata$Perturbations)] = "none"
 
   # De-anonymize genes
+  ecoli_networks$dream5 %<>% set_colnames(c("Gene1", "Gene2", "is_confirmed"))
   ecoli_anonymization_by_name = setNames(toupper(ecoli_anonymization$V2), ecoli_anonymization$V1)
-  ecoli_network_dream5 %<>% set_colnames(c("Gene1", "Gene2", "is_confirmed"))
-  ecoli_network_dream5 %<>% subset(is_confirmed>0)
-  ecoli_network_dream5 %<>% dplyr::mutate(Gene1_name = ecoli_anonymization_by_name[Gene1] )
-  ecoli_network_dream5 %<>% dplyr::mutate(Gene2_name = ecoli_anonymization_by_name[Gene2] )
-  ecoli_network_dream5$Gene1 = NULL
-  ecoli_network_dream5$Gene2 = NULL
+  ecoli_networks$dream5 %<>% dplyr::mutate(Gene1_name = ecoli_anonymization_by_name[Gene1] )
+  ecoli_networks$dream5 %<>% dplyr::mutate(Gene2_name = ecoli_anonymization_by_name[Gene2] )
+  ecoli_networks$dream5$Gene1 = NULL
+  ecoli_networks$dream5$Gene2 = NULL
   
-  # Don't worry about capitalization
-  ecoli_dream5_new_test$Gene1_name %<>% toupper
-  ecoli_dream5_new_test$Gene2_name %<>% toupper
+  # Standardize representation
+  ecoli_networks$dream5[["is_confirmed"]] %<>% equals(1)
+  ecoli_networks$dream5_new_test$Gene1_name %<>% toupper
+  ecoli_networks$dream5_new_test$Gene2_name %<>% toupper
+  
+  # Restrict to positive findings only
+  ecoli_networks$dream5 %<>% subset(is_confirmed)
+}
+
+cat("\nPrepping gold standards based on new experiments in DREAM5.\n")
+{
+  ecoli_networks$dream5_new_test = read.csv("../DREAM5_ecoli_53_novel_hypotheses.csv", header = T, comment.char = "#")
+  ecoli_networks$dream5_new_test$is_confirmed %<>% equals("yes")
+  ecoli_networks$dream5_new_test$Gene1_name %<>% toupper
+  ecoli_networks$dream5_new_test$Gene2_name %<>% toupper
 }
 
 cat("\nPrepping knockout-based gold standard.\n")
 {
+  # Find single-knockout experiments with no aliasing
   ecoli_metadata = ecoli_metadata %>% 
     dplyr::group_by(X.Experiment) %>% 
     dplyr::summarise(
@@ -155,7 +167,8 @@ cat("\nPrepping knockout-based gold standard.\n")
     dplyr::mutate(HasKO = !is.na(HasKO) & HasKO) %>% 
     dplyr::mutate(HasControl = !is.na(HasControl) & HasControl) %>% 
     dplyr::mutate(DeletedGenesNoNA = ifelse(is.na(DeletedGenes), "", DeletedGenes)) 
-  ecoli_network_ko = list()
+  # Test for differential expression with limma
+  ecoli_networks$knockout = list()
   for(e in unique(subset(ecoli_metadata, HasKO & HasControl & HasReplication & HasNoKnownConfounding, select = "X.Experiment", drop = T))){
     current_expression =    t(ecoli_expression[ecoli_metadata$X.Experiment==e,])
     current_metadata =
@@ -166,7 +179,7 @@ cat("\nPrepping knockout-based gold standard.\n")
     fitTrtMean <- lmFit(current_expression, design.trt)
     fit.contrast=contrasts.fit(fitTrtMean, coefficients = colnames(design.trt)[-1])
     efit.contrast=eBayes(fit.contrast)
-    ecoli_network_ko[[as.character(e)]] = 
+    ecoli_networks$knockout[[as.character(e)]] = 
       efit.contrast$p.value %>%
       as.data.frame() %>%
       dplyr::add_rownames(var = "Gene2_name") %>%
@@ -176,46 +189,54 @@ cat("\nPrepping knockout-based gold standard.\n")
                           values_to = "p_value_KO") %>%
       mutate(X.Experiment = e)
   }
-  ecoli_network_ko %<>% data.table::rbindlist()
-  ecoli_network_ko = ecoli_network_ko[,c("Gene1_name", "Gene2_name", "p_value_KO", "X.Experiment")]
-  ecoli_network_ko %<>% subset(!grepl(",", Gene1_name)) #Ignore double knockouts for now
-  ecoli_network_ko$q_value_KO = p.adjust(ecoli_network_ko$p_value_KO, method = "fdr")
-  ecoli_network_ko$Gene1_name = ecoli_anonymization_by_name[ecoli_network_ko$Gene1_name] %>% toupper
-  ecoli_network_ko$Gene2_name = ecoli_anonymization_by_name[ecoli_network_ko$Gene2_name] %>% toupper
-  ecoli_network_ko$is_confirmed = ecoli_network_ko$q_value_KO < 0.05
-  ecoli_network_ko %>% 
+  ecoli_networks$knockout %<>% data.table::rbindlist()
+  ecoli_networks$knockout = ecoli_networks$knockout[,c("Gene1_name", "Gene2_name", "p_value_KO", "X.Experiment")]
+  ecoli_networks$knockout %<>% subset(!grepl(",", Gene1_name)) #Ignore double knockouts for now
+  ecoli_networks$knockout$q_value_KO = p.adjust(ecoli_networks$knockout$p_value_KO, method = "fdr")
+  ecoli_networks$knockout$Gene1_name = ecoli_anonymization_by_name[ecoli_networks$knockout$Gene1_name] %>% toupper
+  ecoli_networks$knockout$Gene2_name = ecoli_anonymization_by_name[ecoli_networks$knockout$Gene2_name] %>% toupper
+  ecoli_networks$knockout %>% 
     mutate(targetIsDecoy = grepl("DECOY", Gene2_name)) %>%
     ggplot()  +
-    geom_histogram(aes(x = q_value_KO, fill = targetIsDecoy), bins = 100)  + 
-    facet_wrap(~targetIsDecoy, ncol = 1, scales = "free_y") +
-    ggtitle( "Decoy gene differential expression")
+    geom_histogram(aes(x = p_value_KO), bins = 100)  + 
+    facet_wrap(~ifelse(targetIsDecoy, "Decoy", "Gene"), ncol = 1, scales = "free_y") +
+    xlab("P value") +
+    ggtitle( "Differential expression after knockout")
+  ggsave("knockout_differential_expression_inflation.svg", width = 5, height = 5)
+  ggsave("knockout_differential_expression_inflation.pdf", width = 5, height = 5)
+  ecoli_networks$knockout$is_confirmed = NA
+  ecoli_networks$knockout$is_confirmed[ecoli_networks$knockout$q_value_KO < 0.05] = T
+  ecoli_networks$knockout %<>% subset(!is.na(is_confirmed))
 }
 
-cat("\nPrepping ChIP gold standard.\n")
+cat("\nPrepping regulonDB 10.9 gold standard.\n")
 # Load curated interactions from regulonDB v10.9
 {
-  tidy_regulondb = function(ecoli_network_regulondb10_9) {
-    ecoli_network_regulondb10_9 %<>%
+  tidy_regulondb = function(regulondb10_9) {
+    regulondb10_9 %<>%
       subset(V8=="gene" & V7=="tf") %>%
       extract(c(2, 4)) %>%
       set_colnames(c("Gene1_name", "Gene2_name"))
-    ecoli_network_regulondb10_9[["Gene1_name"]] %<>% toupper
-    ecoli_network_regulondb10_9[["Gene2_name"]] %<>% toupper
-    ecoli_network_regulondb10_9
+    regulondb10_9[["Gene1_name"]] %<>% toupper
+    regulondb10_9[["Gene2_name"]] %<>% toupper
+    regulondb10_9
   }
-  ecoli_network_regulondb10_9 =
+  ecoli_networks$regulondb10_9 =
     read.table(
       sep = "\t",
       file.path(DATALAKE, "modern_ecoli/regulondb_10.9/full/genetic_network.txt")
     ) 
-  ecoli_network_regulondb10_9_additional_binding_support =
-    ecoli_network_regulondb10_9 %>%
+  ecoli_networks$regulondb10_9_additional_binding_support =
+    ecoli_networks$regulondb10_9 %>%
     subset(grepl("sequence|binding|SELEX|mutation", ignore.case = T, V6)) %>% # Evidence of direct binding
     tidy_regulondb
-  ecoli_network_regulondb10_9 %<>% tidy_regulondb
+  ecoli_networks$regulondb10_9 %<>% tidy_regulondb
+  ecoli_networks$regulondb10_9$is_confirmed = T
+  ecoli_networks$regulondb10_9_additional_binding_support$is_confirmed = T
 }
 
-# Load ChIP-seq data from regulonDB v10.9
+cat("\nPrepping ChIP gold standard.\n")
+# Load ChIP data from regulonDB v10.9
 {
   schema = read.table(sep = ":", strip.white = T,comment.char = "", row.names = 1, text =
                         "#Column 1: RegulonDB Dataset Identifier
@@ -229,7 +250,7 @@ cat("\nPrepping ChIP gold standard.\n")
     #Column 9: DNA sequence
     #Column 10: Growth Condition
     #Column 11: Reference PMID")$V2
-  ecoli_network_chip =
+  ecoli_networks$chip =
     list.files(
       file.path(DATALAKE,"modern_ecoli/regulondb_10.9/highthroughput/"),
       full.names = T
@@ -240,34 +261,34 @@ cat("\nPrepping ChIP gold standard.\n")
     as.data.frame()
   # MelR regulates MelAB. Missing from RegulonDB but there is high quality data from an included study.
   # See https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1308901/
-  ecoli_network_chip %<>% rbind(read.csv(row.names = 1, check.names = F, text = 
+  ecoli_networks$chip %<>% rbind(read.csv(row.names = 1, check.names = F, text = 
     "RegulonDB Dataset Identifier,Dataset Type,Dataset Name,Transcription Factor Name,Effect,Regulated Object,TFBs Absolute genome left position,TFBs Absolute genome right position,DNA sequence,Growth Condition,Reference PMID
     1,<NA>,TF CHIP,<NA>,MelR,<NA>,MelA,<NA>,<NA>,<NA>,<NA>,16301522
     2,<NA>,TF CHIP,<NA>,MelR,<NA>,MelB,<NA>,<NA>,<NA>,<NA>,16301522"
   ))
   # Filter out some samples
-  ecoli_network_chip_metadata = read.csv(file.path(DATALAKE,"modern_ecoli/regulondb_10.9/table_chip_controls.csv"))
-  ecoli_network_chip %<>% merge(ecoli_network_chip_metadata, by.x = "Reference PMID", by.y = "PMID")
-  ecoli_network_chip %<>% subset( 
+  ecoli_chip_metadata = read.csv(file.path(DATALAKE,"modern_ecoli/regulondb_10.9/table_chip_controls.csv"))
+  ecoli_networks$chip %<>% merge(ecoli_chip_metadata, by.x = "Reference PMID", by.y = "PMID")
+  ecoli_networks$chip %<>% subset( 
     "keep" == Recommendation |  # keep whole studies
       mapply(grepl, `Transcription Factor Name`, Recommendation, ignore.case = T) # keep only certain regulators from a couple studies
   )
   # Tidy to match other gold standards
-  ecoli_network_chip %<>%
+  ecoli_networks$chip %<>%
     extract(c("Transcription Factor Name", "Regulated Object")) %>%
     set_colnames(c("Gene1_name", "Gene2_name")) %>%
     dplyr::mutate(is_confirmed = T)
-  ecoli_network_chip = ecoli_network_chip[!duplicated(ecoli_network_chip),]
+  ecoli_networks$chip = ecoli_networks$chip[!duplicated(ecoli_networks$chip),]
 
   # Fix some genes with multiple names
-  ecoli_network_chip$Gene1_name[ecoli_network_chip$Gene1_name=="Sigma70"] = "rpoD"
-  ecoli_network_chip$Gene1_name[ecoli_network_chip$Gene1_name=="Sigma38"] = "rpoS"
-  ecoli_network_chip$Gene1_name[ecoli_network_chip$Gene1_name=="Sigma32"] = "rpoH"
-  ecoli_network_chip$Gene1_name[ecoli_network_chip$Gene1_name=="Cra"    ] = "fruR"
-  ecoli_network_chip$Gene1_name[ecoli_network_chip$Gene1_name=="H-NS"   ] = "hns"
-  ecoli_network_chip$Gene1_name[ecoli_network_chip$Gene1_name=="IHF"    ] = "ihfA"
+  ecoli_networks$chip$Gene1_name[ecoli_networks$chip$Gene1_name=="Sigma70"] = "rpoD"
+  ecoli_networks$chip$Gene1_name[ecoli_networks$chip$Gene1_name=="Sigma38"] = "rpoS"
+  ecoli_networks$chip$Gene1_name[ecoli_networks$chip$Gene1_name=="Sigma32"] = "rpoH"
+  ecoli_networks$chip$Gene1_name[ecoli_networks$chip$Gene1_name=="Cra"    ] = "fruR"
+  ecoli_networks$chip$Gene1_name[ecoli_networks$chip$Gene1_name=="H-NS"   ] = "hns"
+  ecoli_networks$chip$Gene1_name[ecoli_networks$chip$Gene1_name=="IHF"    ] = "ihfA"
   # Fix some annotations like "WITHIN bcsE" to "bcsE"
-  ecoli_network_chip$Gene2_name %<>% gsub("WITHIN |END OF |PSEUDOGENE|-[0-9]", "", ignore.case = T, .)
+  ecoli_networks$chip$Gene2_name %<>% gsub("WITHIN |END OF |PSEUDOGENE|-[0-9]", "", ignore.case = T, .)
   # Fix multi-gene entries
   is_ecoli_operon = function(operon){
     is_lower = function(x) x==tolower(x)
@@ -284,17 +305,17 @@ cat("\nPrepping ChIP gold standard.\n")
       return(operon)
     }
   }
-  ecoli_network_chip %<>% dplyr::mutate(Gene2_name = sapply(Gene2_name, separate_ecoli_operon))
-  ecoli_network_chip %<>% tidyr::separate_rows(Gene2_name) 
+  ecoli_networks$chip %<>% dplyr::mutate(Gene2_name = sapply(Gene2_name, separate_ecoli_operon))
+  ecoli_networks$chip %<>% tidyr::separate_rows(Gene2_name) 
   # Remove errant suffixes like -1 and -2
-  ecoli_network_chip %<>% subset(nchar(Gene2_name)>=3)
-  ecoli_network_chip =
-    ecoli_network_chip %>%
+  ecoli_networks$chip %<>% subset(nchar(Gene2_name)>=3)
+  ecoli_networks$chip =
+    ecoli_networks$chip %>%
     subset(Gene1_name=="ihfA") %>%
     mutate(Gene1_name="ihfB") %>%
-    rbind(ecoli_network_chip)
-  ecoli_network_chip[["Gene1_name"]] %<>% toupper
-  ecoli_network_chip[["Gene2_name"]] %<>% toupper
+    rbind(ecoli_networks$chip)
+  ecoli_networks$chip[["Gene1_name"]] %<>% toupper
+  ecoli_networks$chip[["Gene2_name"]] %<>% toupper
 }
 
 # Augment the ChIP benchmark with all genes of any targeted transcription unit.
@@ -310,22 +331,21 @@ cat("\nPrepping ChIP gold standard.\n")
   # Tricky pair of merges here.
   # 1. Add the transcription unit for each target gene
   # 2. Add the other target genes for each transcription unit
-  ecoli_network_tu_augmented = merge(ecoli_network_chip, ecoli_tu, by = "Gene2_name", all.x = T)
-  ecoli_network_tu_augmented = merge(ecoli_network_tu_augmented, ecoli_tu, by = "Transcription-Units", all.y = T)
-  ecoli_network_tu_augmented %<>% dplyr::mutate(not_in_original = Gene2_name.x != Gene2_name.y)
-  ecoli_network_tu_augmented[["Gene2_name"]] = ecoli_network_tu_augmented[["Gene2_name.y"]]
-  ecoli_network_tu_augmented[["Gene2_name.x"]] = NULL
-  ecoli_network_tu_augmented[["Gene2_name.y"]] = NULL
-  doops = duplicated(ecoli_network_tu_augmented[c("Gene1_name","Gene2_name")])
-  ecoli_network_tu_augmented = ecoli_network_tu_augmented[!doops, ]
-  ecoli_network_tu_augmented %<>% subset(!is.na(Gene1_name))
+  ecoli_networks$tu_augmented = merge(ecoli_networks$chip, ecoli_tu, by = "Gene2_name", all.x = T)
+  ecoli_networks$tu_augmented = merge(ecoli_networks$tu_augmented, ecoli_tu, by = "Transcription-Units", all.y = T)
+  ecoli_networks$tu_augmented %<>% dplyr::mutate(not_in_original = Gene2_name.x != Gene2_name.y)
+  ecoli_networks$tu_augmented[["Gene2_name"]] = ecoli_networks$tu_augmented[["Gene2_name.y"]]
+  ecoli_networks$tu_augmented[["Gene2_name.x"]] = NULL
+  ecoli_networks$tu_augmented[["Gene2_name.y"]] = NULL
+  doops = duplicated(ecoli_networks$tu_augmented[c("Gene1_name","Gene2_name")])
+  ecoli_networks$tu_augmented = ecoli_networks$tu_augmented[!doops, ]
+  ecoli_networks$tu_augmented %<>% subset(!is.na(Gene1_name))
   #Gold standard sizes with and without augmentation:
-  dim(ecoli_network_chip)
-  dim(ecoli_network_tu_augmented)
-  table(ecoli_network_chip$Gene1_name) %>% sort
-  table(ecoli_network_tu_augmented$Gene1_name) %>% sort
+  dim(ecoli_networks$chip)
+  dim(ecoli_networks$tu_augmented)
+  table(ecoli_networks$chip$Gene1_name) %>% sort
+  table(ecoli_networks$tu_augmented$Gene1_name) %>% sort
 }
-AVAILABLE_GOLD_STANDARDS = c( "dream5", "curated", "chip", "chip_augmented", "knockout" )
 
 # Check out the expression data briefly
 ecoli_expression[1:4, 1:4]
@@ -371,23 +391,12 @@ try({
 
 # This will be used later to check the results.
 check_against_gold_standards = function(DF){
-  for( gold_standard_name in AVAILABLE_GOLD_STANDARDS ){
+  for( gold_standard_name in names(ecoli_networks) ){
     cat("Evaluating against ", gold_standard_name, " gold standard\n")
-    if(gold_standard_name=="dream5"){
-      gold_standard = ecoli_network_dream5
-    } else if(gold_standard_name=="knockout"){
-      gold_standard = ecoli_network_ko
-    } else if(gold_standard_name=="curated"){
-      gold_standard = ecoli_network_regulondb10_9
-    } else if(gold_standard_name=="chip"){
-      gold_standard = ecoli_network_chip
-    } else if(gold_standard_name=="chip_augmented"){
-      gold_standard = ecoli_network_tu_augmented
-    } else {
-      stop("Gold standard by that name not found.\n")
-    }
-    gold_standard = gold_standard[,c("Gene1_name", "Gene2_name")]
-    gold_standard[["is_confirmed"]] = T
+    gold_standard = ecoli_networks[[gold_standard_name]]
+    stopifnot(all(c("Gene1_name", "Gene2_name", "is_confirmed") %in% colnames(gold_standard)))
+    stopifnot("Missing values in gold standards are not allowed."=!any(is.na(gold_standard$is_confirmed)))
+    gold_standard = gold_standard[,c("Gene1_name", "Gene2_name", "is_confirmed")]
     dir.create(gold_standard_name, recursive = T, showWarnings = F)
     withr::with_dir(gold_standard_name, {
       # Show degree distribution of gold standard
@@ -408,16 +417,16 @@ check_against_gold_standards = function(DF){
     gold_standard_symmetric %<>% dplyr::arrange(desc(is_confirmed))
     gold_standard_symmetric = gold_standard_symmetric[!duplicated(gold_standard_symmetric$Gene1_name,
                                                                   gold_standard_symmetric$Gene2_name),]
-    # This makes true edges correct; the rest is NA and fails to distinguish between
-    # unknowns and known negatives.
+    # This merge makes true edges correct, but the rest is filled with NA's and fails to distinguish between
+    # unknowns and known negatives. This is addressed below.
     DF_plus_gs = merge(DF, gold_standard_symmetric, by = c("Gene1_name", "Gene2_name"), all.x = T, all.y = F)
-    # This treats everything as a known negative.
+    # This treats everything not present as a known negative.
     if(any(is.na(DF_plus_gs[["is_confirmed"]]))){
       DF_plus_gs[["is_confirmed"]][is.na(DF_plus_gs[["is_confirmed"]])] = F
     }
     # In ChIP data and KO+microarray experiments, we can distinguish between unknowns (not assayed) and known
     # negatives (assayed and not found).
-    if(grepl("chip|ko", gold_standard_name)){
+    if(grepl("knockout|ko|chip|tu_augmented", gold_standard_name)){
       DF_plus_gs[["is_confirmed"]][ !( DF_plus_gs[["Gene1_name"]] %in% gold_standard[["Gene1_name"]] ) ] = NA
     }
     # Omit edges where that target gene is NEVER present in the gold standard.

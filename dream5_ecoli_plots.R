@@ -11,6 +11,7 @@ for(omit_knockout_evaluation_samples in c(T, F)){
   for(condition_index in nrow(conditions):1){
     try({
       conditions$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
+      conditions_with_summaries$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
       offset = omit_knockout_evaluation_samples*nrow(conditions)
       write.table(conditions[condition_index,], sep = "\t", quote = F)
       attach(conditions[condition_index,], warn.conflicts = F)
@@ -20,28 +21,32 @@ for(omit_knockout_evaluation_samples in c(T, F)){
         working_directory %<>% file.path(prefix, .)
       }
       # Check out the knockoffs via UMAP and KNN exchangeability test
-      withr::with_dir(working_directory, {
-        knockoffs[[condition_index + offset]] = read.csv("knockoffs.csv", row.names = 1)
-        try(silent = T,
-          {exchangeability[[condition_index + offset]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])}
-        )
-        conditions_with_summaries[condition_index + offset, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
-        conditions_with_summaries[condition_index + offset, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
-        umaps[[condition_index + offset]] = umap::umap(knockoffs[[condition_index + offset]], random.state = 0) %>% extract2("layout")
-        calibration_sim[[condition_index + offset]] = read.csv("average_case_calibration.csv", row.names = 1) %>%
-          colMeans %>%
-          (function(x) data.frame(nominal_fdr = gsub("^X", "", names(x)) %>% as.numeric, empirical_fdr = x))
-      })
-      umaps[[condition_index + offset]]           %<>% merge(conditions[condition_index,])
-      calibration_sim[[condition_index + offset]] %<>% merge(conditions[condition_index,])
-      # check vs various gold standards
-      for( gold_standard_name in AVAILABLE_GOLD_STANDARDS ){
-        i = i + 1
-        withr::with_dir(file.path(working_directory, gold_standard_name), {
-          calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
-          calibration_gs[[i]] %<>% merge(conditions[condition_index,])
-          calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
+      # This is more complex if done with knockout samples included & excluded; we just do included
+      if(!omit_knockout_evaluation_samples){ 
+        withr::with_dir(working_directory, {
+          knockoffs[[condition_index + offset]] = read.csv("knockoffs.csv", row.names = 1)
+          exchangeability[[condition_index]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])
+          conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
+          conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
+          umaps[[condition_index]] = umap::umap(knockoffs[[condition_index]], random.state = 0) %>% extract2("layout")
+          umaps[[condition_index]]           %<>% merge(conditions[condition_index,])
+          calibration_sim[[condition_index]] = read.csv("average_case_calibration.csv", row.names = 1) %>%
+            colMeans %>%
+            (function(x) data.frame(nominal_fdr = gsub("^X", "", names(x)) %>% as.numeric, empirical_fdr = x))
+          calibration_sim[[condition_index]] %<>% merge(conditions[condition_index,])
         })
+      }
+      # check vs various gold standards
+      for( gold_standard_name in names(ecoli_networks) ){
+        try(silent = T,
+          {
+            i = i + 1
+            withr::with_dir(file.path(working_directory, gold_standard_name), {
+              calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
+              calibration_gs[[i]] %<>% merge(conditions[condition_index,])
+              calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
+            })
+          })
       }
     })
   }
@@ -53,14 +58,14 @@ conditions_with_summaries %<>% mutate( knockoff_method = paste0(knockoff_type, "
 umaps %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_gs %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_sim %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
-  
-  # Check how well ChIP data capture known stuff from regulonDB
+
+# Check how well ChIP data capture known stuff from regulonDB
 check_chip_power = function( regulon_network, 
                              regulon_network_name = deparse(substitute(regulon_network)),
                              chip_network, 
                              chip_network_name = deparse(substitute(chip_network)) ) {
     regulon_network %>%
-    dplyr::mutate(expected_in_chip = Gene1_name %in% ecoli_network_chip$Gene1_name) %>%
+    dplyr::mutate(expected_in_chip = Gene1_name %in% chip_network$Gene1_name) %>%
     dplyr::mutate(present_in_chip =
                     Gene1_name %in% chip_network$Gene1_name & 
                     Gene2_name %in% chip_network$Gene2_name) %>%
@@ -78,41 +83,62 @@ check_chip_power = function( regulon_network,
     dplyr::mutate(regulator = factor(regulator, levels = regulator))
 }
 chip_power = Reduce(rbind, list(
-  check_chip_power(regulon_network = ecoli_network_regulondb10_9,
+  check_chip_power(regulon_network = ecoli_networks$regulondb10_9,
                    regulon_network_name = "RegulonDB 10.9 full",
-                   chip_network = ecoli_network_chip, 
-                   chip_network_name = "No TU augmentation"),
+                   chip_network = ecoli_networks$knockout, 
+                   chip_network_name = "Knockout-based"),
   
-  check_chip_power(regulon_network = ecoli_network_regulondb10_9_additional_binding_support,
-                   regulon_network_name = "RegulonDB 10.9 filtered for additional binding support",
-                   chip_network = ecoli_network_chip, 
-                   chip_network_name = "No TU augmentation"),
+  check_chip_power(regulon_network = ecoli_networks$regulondb10_9_additional_binding_support,
+                   regulon_network_name = "RegulonDB 10.9 filtered \nfor additional binding support",
+                   chip_network = ecoli_networks$knockout, 
+                   chip_network_name = "Knockout-based"),
   
-  check_chip_power(regulon_network = ecoli_network_regulondb10_9,
+  check_chip_power(regulon_network = ecoli_networks$regulondb10_9,
                    regulon_network_name = "RegulonDB 10.9 full",
-                   chip_network = ecoli_network_tu_augmented, 
-                   chip_network_name = "With TU augmentation"),
+                   chip_network = ecoli_networks$chip, 
+                   chip_network_name = "ChIP"),
   
-  check_chip_power(regulon_network = ecoli_network_regulondb10_9_additional_binding_support,
-                   regulon_network_name = "RegulonDB 10.9 filtered for additional binding support",
-                   chip_network = ecoli_network_tu_augmented, 
-                   chip_network_name = "With TU augmentation")
+  check_chip_power(regulon_network = ecoli_networks$regulondb10_9_additional_binding_support,
+                   regulon_network_name = "RegulonDB 10.9 filtered \nfor additional binding support",
+                   chip_network = ecoli_networks$chip, 
+                   chip_network_name = "ChIP"),
+  
+  check_chip_power(regulon_network = ecoli_networks$regulondb10_9,
+                   regulon_network_name = "RegulonDB 10.9 full",
+                   chip_network = ecoli_networks$tu_augmented, 
+                   chip_network_name = "ChIP with TU \naugmentation"),
+  
+  check_chip_power(regulon_network = ecoli_networks$regulondb10_9_additional_binding_support,
+                   regulon_network_name = "RegulonDB 10.9 filtered \nfor additional binding support",
+                   chip_network = ecoli_networks$tu_augmented, 
+                   chip_network_name = "ChIP with TU \naugmentation"),
+  check_chip_power(regulon_network = ecoli_networks$knockout,
+                   regulon_network_name = "Knockout-based",
+                   chip_network = ecoli_networks$tu_augmented, 
+                   chip_network_name = "ChIP with TU \naugmentation"),
+  check_chip_power(regulon_network = ecoli_networks$knockout,
+                   regulon_network_name = "Knockout-based",
+                   chip_network = ecoli_networks$chip, 
+                   chip_network_name = "ChIP"),
+  check_chip_power(regulon_network = ecoli_networks$knockout,
+                   regulon_network_name = "Knockout-based",
+                   chip_network = ecoli_networks$tu_augmented, 
+                   chip_network_name = "ChIP with TU \naugmentation")
 ))
-gold_standard_power = subset(chip_power, regulator == "Mean")
 ggplot(chip_power) + 
   geom_bar(stat = "identity", aes(x = regulator, y = -missing_in_chip), fill = "red") + 
   geom_bar(stat = "identity", aes(x = regulator, y = present_in_chip), fill ="black") + 
   coord_flip() + 
-  ggtitle("ChIP power to verify prior findings") + 
-  facet_grid(chip_network ~ regulon_network, scales = "free_x") +
-  ylab("Number of RegulonDB hypotheses that are \n(missing | confirmed)\n in ChIP data ") 
+  ggtitle("Gold standard power to verify prior findings") + 
+  facet_grid(paste0("in:\n", chip_network) ~ paste0("Looking for:\n", regulon_network), scales = "free") +
+  ylab("Number of hypotheses that are \n(missing | confirmed)") 
 ggsave("fig_chip_power.pdf", width = 5, height = 5)
 ggsave("fig_chip_power.svg", width = 5, height = 5)
 
 # Test our best setting using the DREAM5 new results (53 new predictions explicitly tested)
 explicitly_tested = 
-  read.csv("omit_knockout_evaluation_samples=FALSE/seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/results_with_evaluation.csv.gz") %>% 
-  merge(subset(ecoli_dream5_new_test, is_positive_control=="no"),
+  read.csv("omit_knockout_evaluation_samples=FALSE/seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv.gz") %>% 
+  merge(subset(ecoli_networks$dream5_new_test, is_positive_control=="no"),
         by = c("Gene1_name", "Gene2_name"),
         all.x = F,
         suffixes = c("chip_augmented", "DREAM5_new_tests"))
@@ -123,12 +149,14 @@ explicitly_tested %>%
 
 # Record the top false positives in the most successful setting
 # For later manual inspection
-read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv.gz") %>%
+read.csv("omit_knockout_evaluation_samples=FALSE/seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/chip_augmented/results_with_evaluation.csv.gz") %>%
   subset( !is_confirmed) %>%
   dplyr::arrange(q) %>% 
   write.csv("top_false_positives.csv")
 
-read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/dream5/results_with_evaluation.csv.gz") %>%
+# Enable direct comparison to dream5 consensus method.
+# How many findings at q<0.5 and how many are supported by the benchmark network used in dream5?
+read.csv("omit_knockout_evaluation_samples=FALSE/seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/address_genetic_perturbations=TRUE/knockoff_type=glasso/dream5/results_with_evaluation.csv.gz") %>%
   subset(q<0.5) %>% 
   extract2("is_confirmed") %>%
   fillna("unknown") %>%
@@ -140,6 +168,7 @@ read.csv("seed=1/shrinkage_param=0.001/condition_on=pert_labels_plus_pca50/addre
 # Vary confounder handling
 calibration_gs %>%
   subset( T &
+            !omit_knockout_evaluation_samples &
             gold_standard_name=="chip_augmented" &
             seed==1 &
             knockoff_method %in% c( "glasso_0.001")
@@ -157,7 +186,8 @@ ggsave("fig_confounders.svg", width = 6, height = 3)
 
 # same, on confounding, but make a simpler plot with error bars
 calibration_gs %>%
-  subset( T &
+  subset( T &            
+            !omit_knockout_evaluation_samples &
             gold_standard_name=="chip_augmented" &
             address_genetic_perturbations == T &
             seed == 1 &
@@ -186,6 +216,7 @@ ggsave("fig_confounders_errorbars.svg", width = 8, height = 4)
 fillna =function(x, filler){ x[is.na(x)] = filler; x}
 calibration_gs %>%
   subset( T &
+            !omit_knockout_evaluation_samples &
             gold_standard_name=="chip_augmented" &
             address_genetic_perturbations == T &
             seed == 1 &
@@ -209,6 +240,7 @@ ggsave("fig_confounders_power.svg", width = 6, height = 3)
 # Vary knockoff generation method (KNN exchangeability diagnostic)
 conditions_with_summaries %>%
   subset(
+    !omit_knockout_evaluation_samples &
       condition_on == "none" &
       seed==1 &
       !address_genetic_perturbations
@@ -232,7 +264,8 @@ ggsave("fig_knockoff_type_knn.svg", width = 4, height = 3)
 # Vary knockoff generation method (real Y, calibration)
 calibration_gs %>%
   subset(
-    condition_on == "none" &
+    !omit_knockout_evaluation_samples &
+      condition_on == "none" &
       seed==1 &
       !address_genetic_perturbations &
       gold_standard_name=="chip_augmented"
@@ -244,9 +277,29 @@ calibration_gs %>%
   ggtitle("Calibration by knockoff method", subtitle = "Real target genes") +
   scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
   scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
-  coord_fixed()
+  coord_fixed() 
 ggsave("fig_knockoff_type.pdf", width = 4, height = 3)
 ggsave("fig_knockoff_type.svg", width = 4, height = 3)
+
+# Alternate calibration assessment (Knockout-based)
+calibration_gs %>%
+  subset(
+    omit_knockout_evaluation_samples &
+      condition_on == "none" &
+      seed==1 &
+      !address_genetic_perturbations &
+      gold_standard_name=="knockout"
+  ) %>%
+  ggplot() +
+  geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
+  geom_line(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
+  geom_abline(aes(slope = 1, intercept = 0)) +
+  ggtitle("Calibration by knockoff method", subtitle = "Gold standard based on microarray \nmeasurements after knockout") +
+  scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
+  scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
+  coord_fixed() 
+ggsave("fig_calibration_knockout.pdf", width = 4, height = 3)
+ggsave("fig_calibration_knockout.svg", width = 4, height = 3)
 
 # Vary knockoff generation method (real Y, AUPR)
 calibration_gs %>%
@@ -269,7 +322,7 @@ calibration_gs %>%
   scale_x_log10() +
   xlab("Recall") +
   ylab("Precision") +
-  facet_wrap(~gold_standard_name)
+  facet_grid(omit_knockout_evaluation_samples~gold_standard_name)
 ggsave("fig_knockoff_type_aupr.pdf", width = 6, height = 5)
 ggsave("fig_knockoff_type_aupr.svg", width = 6, height = 5)
 
@@ -309,10 +362,11 @@ ggsave("fig_gs.svg", width = 6, height = 5)
 
 # Fig number uncertain: replicates with different random seed
 calibration_gs %>%
-  subset(condition_on == "none" &
-           gold_standard_name == "chip_augmented" &
-           !address_genetic_perturbations &
-           knockoff_type == "sample" ) %>%
+  subset( omit_knockout_evaluation_samples == F &
+            condition_on == "none" &
+            gold_standard_name == "chip_augmented" &
+            !address_genetic_perturbations &
+            knockoff_type == "sample" ) %>%
   ggplot() +
   geom_line(aes(x = nominal_fdr, y = empirical_fdr, group = seed)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
@@ -329,6 +383,7 @@ umap_actual %<>% merge(data.frame("knockoff_type" = "real data",
                                   "knockoff_method" = "real data",
                                   "shrinkage_param" = NA,
                                   "address_genetic_perturbations" = F,
+                                  "omit_knockout_evaluation_samples" = F,
                                   "condition_on"  = "none"   ,
                                   "seed"    = 1))
 umaps %>%

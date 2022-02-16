@@ -90,7 +90,7 @@ do_one = function(condition_index, omit_knockout_evaluation_samples = F, reuse_r
     ecoli_expression_working_copy = ecoli_expression
     ecoli_tf_expression_working_copy = ecoli_tf_expression
     if(omit_knockout_evaluation_samples){
-      samples_to_keep = !(ecoli_metadata$X.Experiment %in% ecoli_network_ko$X.Experiment)
+      samples_to_keep = !(ecoli_metadata$X.Experiment %in% ecoli_networks$knockout$X.Experiment)
       ecoli_metadata_working_copy      %<>% extract(samples_to_keep, )
       ecoli_expression_working_copy    %<>% extract(samples_to_keep, )
       ecoli_tf_expression_working_copy %<>% extract(samples_to_keep, )
@@ -304,3 +304,4 @@ do_one = function(condition_index, omit_knockout_evaluation_samples = F, reuse_r
 # # you can re-run this with "reuse_results = T".
 parallel::mclapply(nrow(conditions):1, do_one, omit_knockout_evaluation_samples = F, reuse_results = T, mc.cores = parallel::detectCores())
 parallel::mclapply(nrow(conditions):1, do_one, omit_knockout_evaluation_samples = T, reuse_results = T, mc.cores = parallel::detectCores())
+do_one(34, omit_knockout_evaluation_samples = T, reuse_results = T)
