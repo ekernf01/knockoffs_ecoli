@@ -357,6 +357,22 @@ augment_gold_standard = function(gold_standard){
 ecoli_networks$chip_tu_augmented = augment_gold_standard(ecoli_networks$chip)
 ecoli_networks$knockout_tu_augmented = augment_gold_standard(gold_standard = ecoli_networks$knockout)
 
+# Take a network and fill in negatives as long as the regulator and target both occur separately.
+# For e.g. ChIP, this is well motivated as long as it's sensitive enough.
+# For curated collections, it's not as well motivated but we have no other choice. 
+add_negatives = function(DF, possible_targets = unique(DF$Gene2_name)){
+  negatives = expand.grid(
+    Gene1_name = unique(DF[["Gene1_name"]]), 
+    Gene2_name = unique(possible_targets)
+  )
+  DF %<>% merge(negatives, all.y = T)
+  DF[["is_confirmed"]][is.na(DF[["is_confirmed"]])] = F
+  DF
+}
+# Quick test
+# add_negatives(data.frame(Gene1_name = 1:2, Gene2_name = 1:2, is_confirmed = T))
+ecoli_networks %<>% lapply(add_negatives)
+
 # Check out the expression data briefly
 ecoli_expression[1:4, 1:4]
 dim(ecoli_expression)
@@ -399,25 +415,6 @@ try({
   ggsave("genetic_perturbations.pdf", width = 6, height = 6)
 })
 
-
-# Take a network derived from high-throughput data
-# and fill in negatives, assuming rigidly that "all
-# targets would have been detected."
-#
-# There's one exception. We omit edges where that target gene is NEVER present in the gold standard.
-# This could be viewed as overly generous to us but it makes sense if there are naming inconsistencies.
-add_negatives = function(DF, possible_targets = unique(DF$Gene2_name)){
-  negatives = expand.grid(
-    Gene1_name = unique(DF[["Gene1_name"]]), 
-    Gene2_name = unique(possible_targets)
-  )
-  DF %<>% merge(negatives, all.y = T)
-  DF[["is_confirmed"]][is.na(DF[["is_confirmed"]])] = F
-  DF
-}
-# Quick test
-# add_negatives(data.frame(Gene1_name = 1:2, Gene2_name = 1:2, is_confirmed = T))
-
 # This will be used later to check the results.
 check_against_gold_standards = function(DF){
   for( gold_standard_name in names(ecoli_networks) ){
@@ -428,11 +425,6 @@ check_against_gold_standards = function(DF){
     stopifnot("Missing values in gold standards are not allowed."=!any(is.na(gold_standard$is_confirmed)))
     gold_standard = gold_standard[,c("Gene1_name", "Gene2_name", "is_confirmed")]
     dir.create(gold_standard_name, recursive = T, showWarnings = F)
-    
-    # In ChIP data and KO+microarray experiments, add known negatives.
-    if(grepl("knockout|ko|chip", gold_standard_name)){
-      gold_standard %<>% add_negatives()
-    }
     
     # Include forwards & backwards edges -- we don't expect to get the directionality right here.
     gold_standard_reversed = gold_standard
