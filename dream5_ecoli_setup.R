@@ -359,8 +359,13 @@ ecoli_networks$knockout_tu_augmented = augment_gold_standard(gold_standard = eco
 
 # Take a network and fill in negatives as long as the regulator and target both occur separately.
 # For e.g. ChIP, this is well motivated as long as it's sensitive enough.
-# For curated collections, it's not as well motivated but we have no other choice. 
-add_negatives = function(DF, possible_targets = unique(DF$Gene2_name)){
+# For curated collections with positives only, it's not as well motivated but we have no other choice. 
+# For collections with explicit negatives, default behavior is to return it unaltered. 
+add_negatives_if_none = function(DF, possible_targets = unique(DF$Gene2_name), warn = T, force = F){
+  if(!force & any(!DF$is_confirmed)){
+    if(warn){ warning("Explicit negatives already present. Skipping.\n") }
+    return(DF)
+  }
   negatives = expand.grid(
     Gene1_name = unique(DF[["Gene1_name"]]), 
     Gene2_name = unique(possible_targets)
@@ -371,7 +376,7 @@ add_negatives = function(DF, possible_targets = unique(DF$Gene2_name)){
 }
 # Quick test
 # add_negatives(data.frame(Gene1_name = 1:2, Gene2_name = 1:2, is_confirmed = T))
-ecoli_networks %<>% lapply(add_negatives)
+ecoli_networks %<>% lapply(add_negatives_if_none, warn = F, force = F)
 
 # Check out the expression data briefly
 ecoli_expression[1:4, 1:4]
