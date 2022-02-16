@@ -411,10 +411,12 @@ add_negatives = function(DF, possible_targets = unique(DF$Gene2_name)){
     Gene1_name = unique(DF[["Gene1_name"]]), 
     Gene2_name = unique(possible_targets)
   )
-  DF %<>% merge(negatives)
+  DF %<>% merge(negatives, all.y = T)
   DF[["is_confirmed"]][is.na(DF[["is_confirmed"]])] = F
   DF
 }
+# Quick test
+# add_negatives(data.frame(Gene1_name = 1:2, Gene2_name = 1:2, is_confirmed = T))
 
 # This will be used later to check the results.
 check_against_gold_standards = function(DF){
@@ -428,7 +430,7 @@ check_against_gold_standards = function(DF){
     dir.create(gold_standard_name, recursive = T, showWarnings = F)
     
     # In ChIP data and KO+microarray experiments, add known negatives.
-    if(grepl("knockout|ko|chip|chip_tu_augmented", gold_standard_name)){
+    if(grepl("knockout|ko|chip", gold_standard_name)){
       gold_standard %<>% add_negatives()
     }
     
