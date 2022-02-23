@@ -16,7 +16,7 @@ sudo apt-get install -y awscli
 sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
 sudo add-apt-repository 'deb https://cloud.r-project.org/bin/linux/ubuntu bionic-cran40/'
 sudo apt update
-sudo apt install -y libssl-dev libcurl4-openssl-dev libxml2-dev
+sudo apt install -y libssl-dev libcurl4-openssl-dev libxml2-dev libfontconfig1-dev
 sudo apt install -y r-base r-base-dev r-base-core
 R --version #should be 4.1.2 
 aws configure
