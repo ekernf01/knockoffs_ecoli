@@ -9,7 +9,7 @@ git clone https://github.com/ekernf01/knockoffs_ecoli.git
 # source knockoffs_ecoli/run_on_aws.sh
 
 # Install aws cli, build-essential, git, and R v4
-cat "Installing software..."
+echo "Installing software..."
 sudo apt-get update
 sudo apt-get install -y build-essential
 sudo apt-get install -y awscli
@@ -22,7 +22,7 @@ R --version #should be 4.1.2
 aws configure
 
 # Retrieve the datasets used.
-cat "Fetching data..."
+echo "Fetching data..."
 aws s3 cp --recursive s3://cahanlab/eric.kernfeld/datalake/dream5       datalake/dream5
 aws s3 cp --recursive s3://cahanlab/eric.kernfeld/datalake/modern_ecoli datalake/modern_ecoli
 
@@ -33,7 +33,7 @@ git clone https://github.com/ekernf01/rlookc.git
 cd knockoffs_ecoli
 
 # Change this if you want to run a new set of conditions
-mkdir v27 && cd v27
+mkdir v28 && cd v28
 
 # Install some R packages
 Rscript ../dream5_ecoli_install.R

@@ -442,7 +442,7 @@ add_negatives_if_none = function(DF, possible_targets = unique(DF$Gene2_name), w
 ecoli_networks %<>% lapply(add_negatives_if_none, warn = F, force = F)
 
 {
-  cat("\nPrepping gold standard based on intersection of knockout and ChIP data.\n")
+  cat("\nPrepping gold standards based on intersection of knockout and ChIP data.\n")
   # label a pair as:
   # positive if in both
   # negative if in neither
@@ -459,7 +459,7 @@ ecoli_networks %<>% lapply(add_negatives_if_none, warn = F, force = F)
     }
     sapply(is_confirmed_chip + is_confirmed_knockout, do_one)
   }
-  ecoli_networks$rna_chip_intersection = merge(
+  ecoli_networks$chip_intersection_M3Dknockout = merge(
     ecoli_networks$chip_tu_augmented, 
     ecoli_networks$M3Dknockout_tu_augmented,
     by = c("Gene1_name", "Gene2_name"),
@@ -467,9 +467,24 @@ ecoli_networks %<>% lapply(add_negatives_if_none, warn = F, force = F)
   ) %>%
     mutate(is_confirmed = fill_in_confident_results(is_confirmed_chip, is_confirmed_knockout))  %>% 
     subset(!is.na(is_confirmed)) 
-    
+  
   cat("Gold standard size:\n")
-  ecoli_networks$rna_chip_intersection %>% 
+  ecoli_networks$M3Dknockout_tu_augmented %>% 
+    extract(c("Gene1_name", "is_confirmed")) %>%
+    table %>% 
+    print
+  
+  ecoli_networks$chip_intersection_RegulonDB_knockout = merge(
+    ecoli_networks$chip_tu_augmented, 
+    ecoli_networks$regulonDB_knockout_tu_augmented,
+    by = c("Gene1_name", "Gene2_name"),
+    suffixes = c("_chip", "_knockout")
+  ) %>%
+    mutate(is_confirmed = fill_in_confident_results(is_confirmed_chip, is_confirmed_knockout))  %>% 
+    subset(!is.na(is_confirmed)) 
+  
+  cat("Gold standard size:\n")
+  ecoli_networks$chip_intersection_RegulonDB_knockout %>% 
     extract(c("Gene1_name", "is_confirmed")) %>%
     table %>% 
     print
@@ -536,9 +551,12 @@ check_against_gold_standards = function(DF){
     gold_standard_symmetric %<>% dplyr::arrange(desc(is_confirmed))
     gold_standard_symmetric = gold_standard_symmetric[!duplicated(gold_standard_symmetric$Gene1_name,
                                                                   gold_standard_symmetric$Gene2_name),]
-    # This merge correctly maintains explicit positives and negatives. The rest is filled with NA's.
-    DF_plus_gs = merge(DF, gold_standard_symmetric, by = c("Gene1_name", "Gene2_name"), all.x = T, all.y = F)
-
+    # This merge correctly maintains explicit positives and negatives. 
+    DF_plus_gs = merge(DF, gold_standard_symmetric, by = c("Gene1_name", "Gene2_name"), all.x = F, all.y = F)
+    # Computing q-values and then subsetting is not the same as subsetting and then computing q-values.
+    # We want them w.r.t. the subset we are able to evaluate. 
+    DF_plus_gs$q = rlookc::knockoffQvals(DF_plus_gs$knockoff_stat)
+    
     # Compute calibration vs gold standard
     {
       calibration = data.frame(nominal_fdr = (c(1:100)/100) %>% c(quantile(DF$q, probs = c(1:100)/100)),

@@ -64,76 +64,53 @@ check_chip_power = function( regulon_network,
                              regulon_network_name = deparse(substitute(regulon_network)),
                              chip_network, 
                              chip_network_name = deparse(substitute(chip_network)) ) {
-    regulon_network %>%
-    dplyr::mutate(expected_in_chip = Gene1_name %in% chip_network$Gene1_name) %>%
-    dplyr::mutate(present_in_chip =
+  regulon_network %<>% subset(is_confirmed) # This function wants everything present to be a positive.
+  chip_network %<>% subset(is_confirmed) # This function wants everything present to be a positive.
+  regulon_network %>%
+    dplyr::mutate(n_expected = Gene1_name %in% chip_network$Gene1_name) %>%
+    dplyr::mutate(n_present =
                     Gene1_name %in% chip_network$Gene1_name & 
-                    Gene2_name %in% chip_network$Gene2_name) %>%
-    subset(expected_in_chip) %>%
-    with(table(Gene1_name, factor(as.character(present_in_chip), levels = c("FALSE", "TRUE")))) %>%
-    as.data.frame.matrix %>%
+                    Gene2_name %in% chip_network$Gene2_name) %>% 
+    subset(n_expected) %>% 
+    with(table(Gene1_name, factor(as.character(n_present), levels = c("FALSE", "TRUE")))) %>% 
+    as.data.frame.matrix %>% 
     add_totals %>% 
-    set_colnames(c("missing_in_chip", "present_in_chip")) %>%
+    set_colnames(c("n_missing", "n_present")) %>%
     dplyr::add_rownames(var = "regulator") %>%
-    dplyr::mutate(total =   missing_in_chip + present_in_chip ) %>%
-    dplyr::mutate(prop_present = present_in_chip/total ) %>%
-    dplyr::mutate(regulon_network = regulon_network_name ) %>%
-    dplyr::mutate(chip_network = chip_network_name) %>%
-    dplyr::arrange(total) %>% 
+    dplyr::mutate(n_total =   n_missing + n_present ) %>%
+    dplyr::mutate(prop_present = n_present/n_total ) %>%
+    dplyr::mutate(source_network = regulon_network_name ) %>%
+    dplyr::mutate(check_network = chip_network_name) %>%
+    dplyr::arrange(n_total) %>% 
     dplyr::mutate(regulator = factor(regulator, levels = regulator))
 }
-chip_power = Reduce(rbind, list(
-  check_chip_power(regulon_network = ecoli_networks$regulondb10_9,
-                   regulon_network_name = "RegulonDB 10.9 full",
-                   chip_network = ecoli_networks$knockout, 
-                   chip_network_name = "Knockout-based"),
-  
-  check_chip_power(regulon_network = ecoli_networks$regulondb10_9_additional_binding_support,
-                   regulon_network_name = "RegulonDB 10.9 filtered \nfor additional binding support",
-                   chip_network = ecoli_networks$knockout, 
-                   chip_network_name = "Knockout-based"),
-  
-  check_chip_power(regulon_network = ecoli_networks$regulondb10_9,
-                   regulon_network_name = "RegulonDB 10.9 full",
-                   chip_network = ecoli_networks$chip, 
-                   chip_network_name = "ChIP"),
-  
-  check_chip_power(regulon_network = ecoli_networks$regulondb10_9_additional_binding_support,
-                   regulon_network_name = "RegulonDB 10.9 filtered \nfor additional binding support",
-                   chip_network = ecoli_networks$chip, 
-                   chip_network_name = "ChIP"),
-  
-  check_chip_power(regulon_network = ecoli_networks$regulondb10_9,
-                   regulon_network_name = "RegulonDB 10.9 full",
-                   chip_network = ecoli_networks$chip_tu_augmented, 
-                   chip_network_name = "ChIP with TU \naugmentation"),
-  
-  check_chip_power(regulon_network = ecoli_networks$regulondb10_9_additional_binding_support,
-                   regulon_network_name = "RegulonDB 10.9 filtered \nfor additional binding support",
-                   chip_network = ecoli_networks$chip_tu_augmented, 
-                   chip_network_name = "ChIP with TU \naugmentation"),
-  check_chip_power(regulon_network = ecoli_networks$knockout,
-                   regulon_network_name = "Knockout-based",
-                   chip_network = ecoli_networks$chip_tu_augmented, 
-                   chip_network_name = "ChIP with TU \naugmentation"),
-  check_chip_power(regulon_network = ecoli_networks$knockout,
-                   regulon_network_name = "Knockout-based",
-                   chip_network = ecoli_networks$chip, 
-                   chip_network_name = "ChIP"),
-  check_chip_power(regulon_network = ecoli_networks$knockout,
-                   regulon_network_name = "Knockout-based",
-                   chip_network = ecoli_networks$chip_tu_augmented, 
-                   chip_network_name = "ChIP with TU \naugmentation")
-))
-ggplot(chip_power) + 
-  geom_bar(stat = "identity", aes(x = regulator, y = -missing_in_chip), fill = "red") + 
-  geom_bar(stat = "identity", aes(x = regulator, y = present_in_chip), fill ="black") + 
+chip_power = expand.grid(name1 = names(ecoli_networks), name2 = names(ecoli_networks)) %>%
+  subset(name1!=name2) %>%
+  with( data = ., 
+        mapply(function(name1, name2) {
+          check_chip_power(regulon_network = ecoli_networks[[name1]],
+                           regulon_network_name = name1,
+                           chip_network = ecoli_networks[[name2]],
+                           chip_network_name = name2)
+        }, 
+        name1 = name1, 
+        name2 = name2,
+        SIMPLIFY = F)
+  ) %>%
+  Reduce(rbind, .)
+
+chip_power %>%  
+  subset(source_network %in%  c("dream5_new_test", "regulondb10_9", "chip_tu_augmented", "regulonDB_knockout_tu_augmented", "M3Dknockout_tu_augmented")) %>%
+  subset(check_network %in%  c("chip_tu_augmented", "regulonDB_knockout_tu_augmented", "M3Dknockout_tu_augmented")) %>%
+  ggplot() + 
+  geom_bar(stat = "identity", aes(x = regulator, y = -n_missing), fill = "red") + 
+  geom_bar(stat = "identity", aes(x = regulator, y = n_present), fill ="black") + 
   coord_flip() + 
   ggtitle("Gold standard power to verify prior findings") + 
-  facet_grid(paste0("in:\n", chip_network) ~ paste0("Looking for:\n", regulon_network), scales = "free") +
-  ylab("Number of hypotheses that are \n(missing | confirmed)") 
-ggsave("fig_chip_power.pdf", width = 5, height = 5)
-ggsave("fig_chip_power.svg", width = 5, height = 5)
+  facet_grid( paste0("Edges compared to:\n", check_network) ~ paste0("Edges taken from:\n", source_network), scales = "free") +
+  ylab("Number of hypotheses that are \n(not confirmed | confirmed)") 
+ggsave("fig_gs_comparison.pdf", width = 5, height = 5)
+ggsave("fig_gs_comparison.svg", width = 5, height = 5)
 
 # Test our best setting using the DREAM5 new results (53 new predictions explicitly tested)
 explicitly_tested = 
@@ -281,25 +258,36 @@ calibration_gs %>%
 ggsave("fig_knockoff_type.pdf", width = 4, height = 3)
 ggsave("fig_knockoff_type.svg", width = 4, height = 3)
 
-# Alternate calibration assessment (Knockout-based)
+# Alternate calibration assessment (various gold standards)
 calibration_gs %>%
   subset(
     omit_knockout_evaluation_samples &
-      condition_on == "none" &
+      condition_on == "pert_labels_plus_pca50" &
       seed==1 &
-      !address_genetic_perturbations &
-      gold_standard_name=="knockout"
-  ) %>%
+      address_genetic_perturbations &
+      knockoff_type == "glasso" & shrinkage_param == 0.001
+  ) %>% 
+  dplyr::mutate(gold_standard_category = "") %>%
+  dplyr::mutate(gold_standard_category = ifelse(grepl("chip", gold_standard_name), "RegulonDB chip", gold_standard_category)) %>%
+  dplyr::mutate(gold_standard_category = ifelse(grepl("dream5", gold_standard_name), "Exact DREAM5\nreference networks", gold_standard_category)) %>%
+  dplyr::mutate(gold_standard_category = ifelse(grepl("10_9", gold_standard_name), "RegulonDB curated", gold_standard_category)) %>%
+  dplyr::mutate(gold_standard_category = ifelse(grepl("M3D", gold_standard_name), "M3D knockouts", gold_standard_category)) %>%
+  dplyr::mutate(gold_standard_category = ifelse(grepl("regulonDB_knockout", ignore.case = T, gold_standard_name), "RegulonDB knockouts", gold_standard_category)) %>%
   ggplot() +
-  geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
-  geom_line(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
+  geom_errorbar(aes(x = nominal_fdr,                 
+                    ymin = pmax(empirical_fdr - moe_95, 0),
+                    ymax = pmin(empirical_fdr + moe_95, 1),
+                    color = gold_standard_name)) +
+  geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = gold_standard_name)) +
+  geom_line(aes(x = nominal_fdr, y = empirical_fdr, color = gold_standard_name)) +
   geom_abline(aes(slope = 1, intercept = 0)) +
-  ggtitle("Calibration by knockoff method", subtitle = "Gold standard based on microarray \nmeasurements after knockout") +
+  ggtitle("Calibration by gold standard", subtitle = "Knockoffs based 'glasso_0.001' strategy") +
   scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
   scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
+  facet_wrap(~gold_standard_category) +
   coord_fixed() 
-ggsave("fig_calibration_knockout.pdf", width = 4, height = 3)
-ggsave("fig_calibration_knockout.svg", width = 4, height = 3)
+ggsave("fig_calibration_alternate_gs.pdf", width = 4, height = 3)
+ggsave("fig_calibration_alternate_gs.svg", width = 4, height = 3)
 
 # Vary knockoff generation method (real Y, AUPR)
 calibration_gs %>%
