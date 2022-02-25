@@ -1,4 +1,4 @@
-# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v27/")
+# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v28/")
 suppressPackageStartupMessages({
   library("dplyr")
   library("ggplot2")
@@ -663,3 +663,32 @@ add_totals = function(X, name = "Mean", FUN = colMeans) {
     rbind(X)
 }
 
+
+#' Take a network and make it "unbalanced" by removing
+#' different fractions of positive or negative examples.
+#'
+makeUnbalancedNetwork = function(network, prop_positives, prop_negatives, seed = 0){
+  network %<>% subset(!is.na(is_confirmed))
+  if(all(network$is_confirmed, na.rm = T)){
+    stop("Cannot make it unbalanced with no negative examples.\n")
+  }
+  set.seed(seed)
+  include_if_positive = rbinom(prob = prop_positives, size = 1, n = nrow(network))
+  include_if_negative = rbinom(prob = prop_negatives, size = 1, n = nrow(network))
+  network$include = ifelse( network$is_confirmed, include_if_positive, include_if_negative) %>% as.logical
+  network %<>% subset(include)
+  network
+}
+# Quick test
+# makeUnbalancedNetwork(data.frame(is_confirmed = rep(0:1, 20)), 0.5, 0.5)
+
+# Deploy on networks with large but incomplete positive and negative sets
+for(bias in c("positive", "negative")){
+  for(network in c("chip_intersection_M3Dknockout", "chip_intersection_RegulonDB_knockout", "regulondb10_9")){
+    prop_positives = ifelse(bias == "positive", 1, 0.5)
+    prop_negatives = ifelse(bias == "negative", 1, 0.5)
+    ecoli_networks[[paste0(network, "_biased_", bias)]] = 
+      makeUnbalancedNetwork( ecoli_networks[[network]], 
+                             prop_positives, prop_negatives) 
+  }
+}
