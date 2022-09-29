@@ -11,7 +11,7 @@ wrapFacetLabels = function(x){
 }
 ggplot2::theme_update(text = element_text(family = "ArialMT"))
 # Collect results to make certain key summary plots
-# This will allow us to show calibration any combination of gold standard, knockoff construction method,
+# This will allow us to show calibration on any combination of gold standard, knockoff construction method,
 # number of principal components, et cetera by subsetting a giant tidy dataframe. 
 cat("Loading experimental results and making UMAPs...")
 conditions_with_summaries = conditions = read.csv("experiments_to_run.csv", row.names = 1)
@@ -140,13 +140,14 @@ dir.create("figures", recursive = T, showWarnings = F)
       ) %>%
     dplyr::mutate(nominal_fdr = as.character(nominal_fdr)) %>%
     ggplot() +
-    geom_pointrange(aes(y = condition_on, 
+    geom_pointrange(aes(y = knockoff_method, 
                         xmin = empirical_fdr - moe_95, 
                         xmax = empirical_fdr + moe_95, 
                         x = empirical_fdr,
                         color = nominal_fdr, 
-                        shape = nominal_fdr), 
-                    position = position_dodge(0.5)) +    facet_wrap(~wrapFacetLabels( gold_standard_name ) ) +
+                        shape = do_omit_possible_spouses), 
+                    position = position_dodge(0.5)) +    
+    facet_wrap(~wrapFacetLabels( gold_standard_name ) ) +
     geom_vline(aes(xintercept = as.numeric(nominal_fdr), color = nominal_fdr)) +
     ggtitle("Calibration across various gold standards") +
     scale_x_continuous(breaks = (0:2)/2, limits = 0:1) 
@@ -172,8 +173,9 @@ dir.create("figures", recursive = T, showWarnings = F)
                         xmax = empirical_fdr + moe_95, 
                         x = empirical_fdr,
                         color = nominal_fdr, 
-                        shape = nominal_fdr), 
-                    position = position_dodge(0.5)) +    facet_wrap(~wrapFacetLabels( gold_standard_name ) )+
+                        shape = do_omit_possible_spouses), 
+                    position = position_dodge(0.5)) +    
+    facet_wrap(~wrapFacetLabels( gold_standard_name ) )+
     geom_vline(aes(xintercept = as.numeric(nominal_fdr), color = nominal_fdr)) +
     ggtitle("Calibration when correcting for possible confounders") +
     scale_x_continuous(breaks = (0:2)/2, limits = 0:1) 
@@ -288,7 +290,7 @@ dir.create("figures", recursive = T, showWarnings = F)
                         xmax = empirical_fdr + moe_95, 
                         x = empirical_fdr,
                         color = nominal_fdr, 
-                        shape = nominal_fdr), 
+                        shape = do_omit_possible_spouses), 
                     position = position_dodge(0.5)) +
     facet_wrap(~wrapFacetLabels(gold_standard_name) ) +
     geom_vline(aes(xintercept = as.numeric(nominal_fdr), color = nominal_fdr)) +

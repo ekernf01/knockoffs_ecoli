@@ -263,7 +263,7 @@ cat("\nPrepping RegulonDB ChIP gold standard.\n")
     data.table::rbindlist() %>%
     set_colnames(schema) %>%
     as.data.frame()
-  # MelR regulates MelAB. Missing from RegulonDB but there is high quality data from an included study.
+  # MelR regulates MelAB. This is missing from RegulonDB but there is high quality data from an included study.
   # See https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1308901/
   ecoli_networks$chip %<>% rbind(read.csv(row.names = 1, check.names = F, text = 
                                             "RegulonDB Dataset Identifier,Dataset Type,Dataset Name,Transcription Factor Name,Effect,Regulated Object,TFBs Absolute genome left position,TFBs Absolute genome right position,DNA sequence,Growth Condition,Reference PMID
@@ -420,10 +420,10 @@ ecoli_networks$chip_tu_augmented = augment_gold_standard(ecoli_networks$chip)
 ecoli_networks$M3Dknockout_tu_augmented = augment_gold_standard(gold_standard = ecoli_networks$M3Dknockout)
 ecoli_networks$regulonDB_knockout_tu_augmented = augment_gold_standard(gold_standard = ecoli_networks$regulonDB_knockout)
 
-# Take a network and fill in negatives as long as the regulator and target both occur separately.
+# Take a network and fill in missing entries as negatives (A does not regulate B).
 # For e.g. ChIP, this is well motivated as long as it's sensitive enough.
 # For curated collections with positives only, it's not as well motivated but we have no other choice. 
-# For collections with explicit negatives, default behavior is to return it unaltered. 
+# For collections already having explicit negatives, default behavior is to return it unaltered. 
 add_negatives_if_none = function(DF, possible_targets = unique(DF$Gene2_name), warn = T, force = F){
   if(!force & any(!DF$is_confirmed)){
     if(warn){ warning("Explicit negatives already present. Skipping.\n") }
@@ -440,6 +440,8 @@ add_negatives_if_none = function(DF, possible_targets = unique(DF$Gene2_name), w
 # Quick test
 # add_negatives(data.frame(Gene1_name = 1:2, Gene2_name = 1:2, is_confirmed = T))
 ecoli_networks %<>% lapply(add_negatives_if_none, warn = F, force = F)
+
+
 
 {
   cat("\nPrepping gold standards based on intersection of knockout and ChIP data.\n")
@@ -532,7 +534,45 @@ try({
   ggsave("genetic_perturbations.pdf", width = 6, height = 6)
 })
 
-# This will be used later to check the results.
+#' Helper function for below. Given a table with q-values and T/F/NA ground truth, compute calibration at various FDR's. 
+#' 
+compute_calibration_with_unknowns = function(DF_plus_gs){
+  calibration = data.frame(nominal_fdr = (c(1:100)/100) %>% c(quantile(DF_plus_gs$q, probs = c(1:100)/100, na.rm = T)),
+                           empirical_fdr = NA,
+                           num_discoveries = NA)
+  i = 0
+  for(fdr in calibration$nominal_fdr){
+    i = i + 1
+    calibration$empirical_fdr[i] =
+      DF_plus_gs %>%
+      subset(q<fdr) %>%
+      extract2("is_confirmed") %>%
+      mean(na.rm = T) %>%
+      subtract(1, .)
+    calibration$num_discoveries[i] =
+      DF_plus_gs %>%
+      subset(q<fdr) %>%
+      extract2("is_confirmed") %>%
+      is.na %>%
+      not %>%
+      sum
+  }
+  # Add simple binomial standard errors
+  calibration %<>% mutate( moe_95 = 1.96 * sqrt( empirical_fdr * ( 1 - empirical_fdr ) / num_discoveries ) )
+  return(calibration)
+}
+
+#' This handles a difference between a causal DAG and the corresponding MRF structure (the moral graph).
+#' Edges in the MRF can occur between parents & children (good) or spouses (bad), For us, all TF-TF pairs 
+#' are potential spouses, so we have the option to omit them from benchmarks. 
+#' 
+omit_possible_spouses = function(DF_plus_gs){
+  subset(DF_plus_gs, !(Gene1 %in% ecoli_tf) | !(Gene2 %in% ecoli_tf)  )
+}
+
+#' Check calibration against all gold standards, accounting for unknown edge orientation, possible spouses, and incompleteness of gold standards.
+#' This will be used later to score the results.
+#' 
 check_against_gold_standards = function(DF){
   for( gold_standard_name in names(ecoli_networks) ){
     # Check gold standard and set things up
@@ -551,37 +591,22 @@ check_against_gold_standards = function(DF){
     gold_standard_symmetric %<>% dplyr::arrange(desc(is_confirmed))
     gold_standard_symmetric = gold_standard_symmetric[!duplicated(gold_standard_symmetric$Gene1_name,
                                                                   gold_standard_symmetric$Gene2_name),]
-    # This merge correctly maintains explicit positives and negatives. 
-    DF_plus_gs = merge(DF, gold_standard_symmetric, by = c("Gene1_name", "Gene2_name"), all.x = F, all.y = F)
-    # Computing q-values and then subsetting is not the same as subsetting and then computing q-values.
-    # We want them w.r.t. the subset we are able to evaluate. 
-    DF_plus_gs$q = rlookc::knockoffQvals(DF_plus_gs$knockoff_stat)
     
-    # Compute calibration vs gold standard
-    {
-      calibration = data.frame(nominal_fdr = (c(1:100)/100) %>% c(quantile(DF$q, probs = c(1:100)/100)),
-                               empirical_fdr = NA,
-                               num_discoveries = NA)
-      i = 0
-      for(fdr in calibration$nominal_fdr){
-        i = i + 1
-        calibration$empirical_fdr[i] =
-          DF_plus_gs %>%
-          subset(q<fdr) %>%
-          extract2("is_confirmed") %>%
-          mean(na.rm = T) %>%
-          subtract(1, .)
-        calibration$num_discoveries[i] =
-          DF_plus_gs %>%
-          subset(q<fdr) %>%
-          extract2("is_confirmed") %>%
-          is.na %>%
-          not %>%
-          sum
+    calibration_across_spouse_handling = vector("list", 2)
+    for(do_omit_possible_spouses in c(F, T)){
+      DF_plus_gs = merge(DF, gold_standard_symmetric, by = c("Gene1_name", "Gene2_name"), all.x = F, all.y = F)
+      if(do_omit_possible_spouses){
+        DF_plus_gs = omit_possible_spouses(DF_plus_gs)
       }
-      # Add simple binomial standard errors
-      calibration %<>% mutate( moe_95 = 1.96 * sqrt( empirical_fdr * ( 1 - empirical_fdr ) / num_discoveries ) )
+      # Computing q-values and then subsetting is not the same as subsetting and then computing q-values.
+      # We want them w.r.t. the subset we are able to evaluate. 
+      DF_plus_gs$q = rlookc::knockoffQvals(DF_plus_gs$knockoff_stat)
+      calibration_across_spouse_handling[[do_omit_possible_spouses+1]] = compute_calibration_with_unknowns(DF_plus_gs)
+      calibration_across_spouse_handling[[do_omit_possible_spouses+1]][["do_omit_possible_spouses"]] = do_omit_possible_spouses
     }
+    calibration = Reduce(rbind, calibration_across_spouse_handling)
+
+
     withr::with_dir(gold_standard_name, {
       # Save all results for follow-up
       write.csv(DF_plus_gs, ("results_with_evaluation.csv"))
@@ -654,7 +679,9 @@ check_against_gold_standards = function(DF){
   }
 }
 
-# How powerful is the ChIP-seq?
+#' Add a row to a table, showing the means of the input columns.
+#' 
+#' 
 add_totals = function(X, name = "Mean", FUN = colMeans) {
   totals = t(matrix(FUN(X)))
   totals %>% 
@@ -691,4 +718,350 @@ for(bias in c("positive", "negative")){
       makeUnbalancedNetwork( ecoli_networks[[network]], 
                              prop_positives, prop_negatives) 
   }
+}
+
+# Compare basic descriptive properties of the gold standards used in this study. 
+{
+  showNetworkProperties = function(network, name){
+    return(
+      Reduce(
+        f = rbind,
+        list(
+          data.frame(
+            count = network %>%
+              dplyr::group_by(Gene2_name) %>% 
+              dplyr::summarise(degree = sum(is_confirmed)) %>%
+              extract2("degree"),
+            summary = "outDegree", 
+            network = name
+          ),
+          data.frame(
+            count = network %>%
+              dplyr::group_by(Gene1_name) %>% 
+              dplyr::summarise(degree = sum(is_confirmed)) %>%
+              extract2("degree"),
+            summary = "inDegree", 
+            network = name
+          ),
+          totals = 
+            network$is_confirmed %>% 
+            table %>%
+            setNames(c("Negatives", "Positives"))  %>%
+            as.data.frame %>%
+            setNames(c("summary", "count")) %>% 
+            dplyr::mutate(network = name)
+        )
+      )
+    )
+  }
+  
+  networkProperties = mapply(showNetworkProperties, ecoli_networks, names(ecoli_networks), SIMPLIFY = F) %>%
+    Reduce(f = rbind) %>%
+    subset(count != 0)
+  networkProperties %>% 
+    dplyr::mutate(summary = factor(summary, levels = c("inDegree", "outDegree", "Positives", "Negatives"))) %>%
+    dplyr::group_by(network, summary) %>% 
+    dplyr::summarise_all(median) %>% 
+    tidyr::pivot_wider(names_from = summary, values_from = count) %>%
+    write.csv("GoldStandardProperties.csv")
+}
+
+
+make_knockoffs = function(ecoli_tf_expression_working_copy, confounder_indicators, knockoff_type){
+  X = cbind(ecoli_tf_expression_working_copy, confounder_indicators)
+  if(knockoff_type == "mixture"){
+    ecoli_tf_expression_working_copy_knockoffs =
+      rlookc::computeGaussianMixtureKnockoffs(
+        X,
+        do_high_dimensional = T,
+        hard_assignments = clusters$cluster
+      )
+  } else if(knockoff_type == "naive"){
+    # Assumes variables are in columns! Otherwise you're
+    # scrambling all genes within a sample, not all samples within a gene.
+    ecoli_tf_expression_working_copy_knockoffs = apply(X, 2, sample, replace = F)
+  } else if (knockoff_type=="sample"){
+    Sigma = cov(X)
+  } else if (knockoff_type == "shrinkage"){
+    if(is.na(shrinkage_param)){
+      off_diagonal_shrinkage = corpcor::estimate.lambda(X)
+    } else {
+      off_diagonal_shrinkage = shrinkage_param
+    }
+    Sigma = as(corpcor::cor.shrink(X), "matrix")
+  } else if (knockoff_type == "glasso"){
+    glasso_out = glasso::glasso(cov(X), rho = shrinkage_param, penalize.diagonal = F)
+    Sigma = glasso_out$w
+    write.table( mean(glasso_out$wi!=0), ("glasso_wi_fraction_nonzero.csv"))
+  }
+  
+  if(knockoff_type %in% c("glasso", "sample", "shrinkage")){
+    # These methods differ only in the covariance estimate Sigma, done above, but
+    # otherwise they're the same.
+    ecoli_tf_expression_working_copy_knockoffs = rlookc::computeGaussianKnockoffs(X, Sigma = Sigma)
+    # For TF targets, use fast leave-one-out knockoffs (LOOKs).
+    # This output contains all of them in a compact form.
+    # Realize them later on using rlookc::formOneLook.
+    looks_compact = rlookc::generateLooks(
+      X,
+      mu = colMeans(X),
+      Sigma = Sigma,
+      statistic = fast_lasso_penalty,
+      output_type = "knockoffs_compact",
+      vars_to_omit = seq(ncol(ecoli_tf_expression_working_copy))
+    )
+  } else if(knockoff_type %in% c("naive", "mixture")){
+    # Sometimes, efficient code to make LOOKs is not available.
+    # So that the code downstream can remain the same, I pretend to make
+    # LOOKs inside the same data structure used above, even when they just contain
+    # the full knockoffs unmodified.
+    looks_compact = list(
+      knockoffs = ecoli_tf_expression_working_copy_knockoffs,
+      updates =
+        rep(
+          x = list( list(
+            mean_update_left  = matrix(0, nrow = 805),
+            mean_update_right = matrix(0, ncol = ncol(X) - 1),
+            sqrt_cov_update   = matrix(0, ncol = ncol(X) - 1),
+            random_update     = matrix(0, nrow = 805)
+          ) ),
+          length.out = 334
+        ),
+      vars_to_omit = 1:334
+    )
+  } else {
+    warning("Knockoff type not recognized.\n")
+    break
+  }
+  # If confounders were included in knockoff generation, strip them out.
+  ecoli_tf_expression_working_copy_knockoffs = ecoli_tf_expression_working_copy_knockoffs[,1:334]
+  list(ecoli_tf_expression_working_copy_knockoffs, looks_compact)
+}
+
+# One experiment, e.g. "gaussian knockoffs with glasso 0.001 covariance estimate, correcting for 20 principal components 
+# and with no special handling of genetic perturbations."
+do_one = function(condition_index, omit_knockout_evaluation_samples = F, reuse_results = F){
+  withr::with_output_sink(file.path("logs", condition_index), {
+    cat("\n======================================\n")
+    cat("Experiment", condition_index, "of", nrow(conditions), '\n')
+    cat(  "======================================\n")
+    attach(conditions[condition_index,], warn.conflicts = F)
+    tryCatch(set.seed(seed), error = function(e){warning("Random seed not found and not set.\n")})
+    working_directory = ""
+    conditions$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
+    for(j in seq_along(conditions[condition_index,])){
+      prefix = paste0( colnames(conditions)[[j]], "=", conditions[condition_index, j] )
+      working_directory %<>% file.path(prefix, .)
+    }
+    
+    ecoli_metadata_working_copy = ecoli_metadata
+    ecoli_expression_working_copy = ecoli_expression
+    ecoli_tf_expression_working_copy = ecoli_tf_expression
+    if(omit_knockout_evaluation_samples){
+      samples_to_keep = !(ecoli_metadata$X.Experiment %in% ecoli_networks$knockout$X.Experiment)
+      ecoli_metadata_working_copy      %<>% extract(samples_to_keep, )
+      ecoli_expression_working_copy    %<>% extract(samples_to_keep, )
+      ecoli_tf_expression_working_copy %<>% extract(samples_to_keep, )
+      stopifnot(nrow(ecoli_metadata_working_copy)==nrow(ecoli_expression_working_copy))
+    } 
+    
+    cat("\nTesting condition:", working_directory, "\n")
+    dir.create(working_directory, recursive = T, showWarnings = F)
+    withr::with_dir(
+      working_directory,
+      try({
+        if( address_genetic_perturbations ){
+          # When predicting targets of G, if G was knocked out, set expression to 0.
+          # If G was overexpressed, leave expression as is.
+          # Do this before constructing knockoffs.
+          for(i in seq_along(ecoli_metadata_working_copy[["DeletedGenes"]])){
+            g = ecoli_metadata_working_copy[["DeletedGenes"]][[i]]
+            if(!is.na(g)){
+              ecoli_expression_working_copy[i, strsplit(g, ",")[[1]]] = 0
+            }
+          }
+          # When predicting regulators of G, omit or impute any expression value that has been intervened on.
+          # To do this easily later, here's a little function.
+          
+          #' Determine samples to omit.
+          #'
+          #' Input is a gene label (matched to metadata, so anonymous as in "G2388", not 2388 or "RELA")
+          #' Output is a set of samples where that gene is intervened upon.
+          #' These are useless for determining regulators of the target gene.
+          get_samples_to_include = function(target_name){
+            stopifnot(grepl("^G", target_name)) # supposed to be anonymized names, not non-anonymized
+            !or(
+              ecoli_metadata_working_copy$DeletedGenes %>%
+                strsplit(",") %>%
+                sapply(function(x) is.element(target_name, x)),
+              ecoli_metadata_working_copy$OverexpressedGenes %>%
+                strsplit(",") %>%
+                sapply(function(x) is.element(target_name, x))
+            )
+          }
+        } else {
+          get_samples_to_include = function(x) rep(T, nrow(ecoli_metadata_working_copy))
+        }
+        
+        # Construct indicators for confounders
+        {
+          perturbations = model.matrix( ~Perturbations+0, ecoli_metadata_working_copy)
+          perturbations %<>% extract(,-which(colnames(perturbations) == "Perturbationsnone"))
+          pca_results = irlba::prcomp_irlba(ecoli_expression_working_copy, n = 50)
+          if(condition_on == "none"){
+            confounder_indicators = NULL
+          } else if(condition_on == "pert_labels"){
+            confounder_indicators = perturbations
+          } else if(grepl("^pert_labels_plus_pca", condition_on)){
+            n_pc = 10
+            maybe_n_pc = gsub("^pert_labels_plus_pca", "", condition_on) %>% as.numeric
+            if(!is.na(maybe_n_pc)){
+              n_pc = maybe_n_pc
+            }
+            confounder_indicators = cbind( pca_results$x[,1:n_pc], perturbations)
+          } 
+        }
+        
+        # Make knockoffs. Check fit.
+        cat("\nMaking knockoffs.\n")
+        l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
+                           confounder_indicators = confounder_indicators,
+                           knockoff_type = knockoff_type)
+        ecoli_tf_expression_working_copy_knockoffs = l[[1]]
+        looks_compact = l[[2]]
+        rm(l)
+        write.csv(ecoli_tf_expression_working_copy_knockoffs, "knockoffs.csv")
+        
+        # Check power: how different are knockoffs from original features?
+        cor_with_knockoffs = cor(ecoli_tf_expression_working_copy_knockoffs, ecoli_tf_expression_working_copy) %>% diag
+        data.frame( cor_with_knockoffs,
+                    is_decoy = grepl("DECOY", ecoli_anonymization_by_name[names(cor_with_knockoffs)])) %>%
+          ggplot() +
+          geom_histogram(aes(x = cor_with_knockoffs, fill = is_decoy, bins = 30)) +
+          ggtitle("Correlation of each TF with its knockoff")
+        ggsave(("correlations_with_knockoffs.pdf"), width = 5, height = 3)
+        
+        # Check calibration for batch adjustment.
+        # No association should be detected with factors explicitly conditioned on.
+        if(condition_on!="none"){
+          confounder_association_qvals =
+            rlookc::knockoffQvals(
+              cor(confounder_indicators, ecoli_tf_expression_working_copy) -
+                cor(confounder_indicators, ecoli_tf_expression_working_copy_knockoffs)
+            )
+          pdf(("confounder_association_qvals.pdf"), width = 5, height = 2.5)
+          hist(confounder_association_qvals, 40, xlim = 0:1)
+          dev.off()
+        }
+        
+        # Check calibration with simulated Y
+        cat("\nChecking calibration\n")
+        calibration_typical = rlookc::simulateY(
+          n_sim = 100,
+          X = ecoli_tf_expression_working_copy %>% sweep(2, colMeans(ecoli_tf_expression_working_copy), "-"),
+          knockoffs = ecoli_tf_expression_working_copy_knockoffs %>% sweep(2, colMeans(ecoli_tf_expression_working_copy), "-") ,
+          statistic = fast_lasso_penalty,
+          plot_savepath = ("average_case_calibration.pdf")
+        )
+        write.csv(calibration_typical$calibration$fdr, ("average_case_calibration.csv"))
+        
+        # Deploy on non-TF targets
+        if(!reuse_results){
+          cat("\nComputing LASSO paths. This will take a long time.\n")
+          target_genes = colnames(ecoli_expression_working_copy) %>% setdiff(ecoli_tf[[1]])
+          w = list()
+          for(i in seq_along(target_genes)){
+            target = target_genes[[i]]
+            if(i %% 100 == 0){
+              cat( "\n  Target", i, "reached. Remaking knockoffs. ")
+              l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
+                                 confounder_indicators = confounder_indicators,
+                                 knockoff_type = knockoff_type)
+              ecoli_tf_expression_working_copy_knockoffs = l[[1]]
+              looks_compact = l[[2]]
+              rm(l)
+            }
+            samples_to_include = get_samples_to_include(target)
+            w[[target]] = fast_lasso_penalty(
+              y   = ecoli_expression_working_copy[samples_to_include,target],
+              X   = ecoli_tf_expression_working_copy[samples_to_include,],
+              X_k = ecoli_tf_expression_working_copy_knockoffs[samples_to_include,]
+            )
+          }
+          length(w[[1]])
+          length(w)
+          # Deploy on TF targets
+          cat("\n")
+          w_tf = list()
+          for(i in seq_along(ecoli_tf[[1]])){
+            target = ecoli_tf[[1]][[i]]
+            if(i %% 100 == 0){
+              cat( "\n  Target", i, "reached. Remaking knockoffs. ")
+              l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
+                                 confounder_indicators = confounder_indicators,
+                                 knockoff_type = knockoff_type)
+              ecoli_tf_expression_working_copy_knockoffs = l[[1]]
+              looks_compact = l[[2]]
+              rm(l)
+            }
+            knockoffs_minus_i = rlookc::formOneLook(
+              knockoffs = looks_compact$knockoffs,
+              updates = looks_compact$updates,
+              vars_to_omit = looks_compact$vars_to_omit,
+              k = i
+            )[,seq(ncol(ecoli_tf_expression_working_copy)-1)]
+            samples_to_include = get_samples_to_include(target)
+            w_tf[[target]] = fast_lasso_penalty(
+              y   = ecoli_expression_working_copy[samples_to_include,target],
+              X   = ecoli_tf_expression_working_copy[samples_to_include,-i],
+              X_k = knockoffs_minus_i[samples_to_include,]
+            )
+          }
+          length(w_tf[[1]])
+          length(w_tf)
+          # Assemble results nicely
+          DF_tf_target = DF_tf_tf = list()
+          for(k in seq_along(ecoli_tf[[1]])){
+            DF_tf_target[[k]] = data.frame(
+              Gene1 = ecoli_tf[[1]][-k],
+              Gene2 = ecoli_tf[[1]][ k],
+              knockoff_stat = w_tf[[k]]
+            )
+          }
+          for(k in seq_along(target_genes)){
+            DF_tf_tf[[k]] = data.frame(
+              Gene1 = ecoli_tf[[1]],
+              Gene2 = target_genes[ k],
+              knockoff_stat = w[[k]]
+            )
+          }
+          DF = data.table::rbindlist(c(DF_tf_tf, DF_tf_target))
+          signedsqrt = function(x) sign(x)*sqrt(abs(x))
+          hist(DF$knockoff_stat %>% signedsqrt, 40)
+          DF$knockoff_stat %>% median
+          write.csv(DF, ("results.csv"))
+        } else {
+          DF = read.csv("results.csv")
+        }
+        
+        # Add qvals and real gene names
+        dim(DF)
+        DF$q = DF$knockoff_stat %>% rlookc::knockoffQvals(offset = 0)
+        DF$Gene1_name = ecoli_anonymization_by_name[DF$Gene1]
+        DF$Gene2_name = ecoli_anonymization_by_name[DF$Gene2]
+        DF %<>% dplyr::mutate(Gene1_is_decoy = grepl("DECOY", Gene1_name))
+        DF %<>% dplyr::mutate(Gene2_is_decoy = grepl("DECOY", Gene2_name))
+        
+        # How many discoveries do we make?
+        {
+          pdf(("qval_distribution.pdf"))
+          plot(ecdf(DF$q), xlim = 0:1)
+          dev.off()
+        }
+        # Check against gold standards
+        check_against_gold_standards(DF)
+      })
+    )
+    sink()
+  })
 }
