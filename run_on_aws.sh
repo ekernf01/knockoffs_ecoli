@@ -1,14 +1,14 @@
 # This script runs the E coli knockoff GRN experiments assuming
-# a blank Ubuntu 18.04 as a starting point.
+# a blank Ubuntu 18.04 as a starting point. (I used Ubuntu 18 on AWS.)
 
-# For now, I use this interactively to put in passwords etc, but it's almost fully automated.
+# For now, I step through this interactively to put in passwords for private repos and data, but it's almost fully automated.
 
 # Retrieve the ecoli demo repo
 git clone https://github.com/ekernf01/knockoffs_ecoli.git
 # Run the rest all at once
 # source knockoffs_ecoli/run_on_aws.sh
 
-# Install aws cli, build-essential, git, and R v4
+# Install aws cli, build-essential (c compiler), git, curl, and R v4
 echo "Installing software..."
 sudo apt-get update
 sudo apt-get install -y build-essential
@@ -19,7 +19,7 @@ sudo apt update
 sudo apt install -y libssl-dev libcurl4-openssl-dev libxml2-dev libfontconfig1-dev
 sudo apt install -y r-base r-base-dev r-base-core
 R --version #should be 4.1.2 
-aws configure
+aws configure #put your credentials
 
 # Retrieve the datasets used.
 echo "Fetching data..."
@@ -32,7 +32,7 @@ git clone https://github.com/ekernf01/rlookc.git
 # Enter the ecoli demo repo.
 cd knockoffs_ecoli
 
-# Change this if you want to run a new set of conditions
+# Change this if you want to run a new set of conditions without overwriting. 
 mkdir v28 && cd v28
 
 # Install some R packages
