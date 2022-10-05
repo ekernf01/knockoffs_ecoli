@@ -4,6 +4,7 @@ suppressPackageStartupMessages({
   library("ggplot2")
   library("magrittr")
   library("glasso")
+  library("mclust")
   library("limma")
   
 })
@@ -23,6 +24,7 @@ if(!dir.exists(DATALAKE)){
   stop("Datalake not found. Place it in '~/datalake' or Modify `dream5_ecoli_setup.R`.\n")
 }
 
+GAUSSIAN_KNOCKOFF_STRATEGIES = c("glasso", "sample", "shrinkage", "bagging")
 
 # Set to T to run a fast test of the code. Results will not be biologically 
 # meaningful; this is for software testing. 
@@ -37,15 +39,17 @@ test_mode = F
       knockoff_type = c("sample"),
       address_genetic_perturbations = c( F ),
       condition_on = c( "none" ),
-      shrinkage_param = NA,
-      seed = 2:5
+      shrinkage_param = NA,      
+      proportion_removed = c(0),
+      seed = 1:5
     ),
     # study knockoff generation methods
     expand.grid(
-      knockoff_type = c("naive", "shrinkage", "mixture"),
+      knockoff_type = c("sample", "naive", "shrinkage", "mixture", "bagging"),
       address_genetic_perturbations = c( F ),
       condition_on = c( "none"),
       shrinkage_param = NA,
+      proportion_removed = c(0, 0.1),
       seed = 1
     ),
     # study other knockoff generation methods
@@ -54,6 +58,7 @@ test_mode = F
       address_genetic_perturbations = c( F ),
       condition_on = c( "none"),
       shrinkage_param = c(0.1, 0.01, 0.001),
+      proportion_removed = c(0, 0.1),
       seed = 1
     ),
     # study confounder handling
@@ -66,7 +71,8 @@ test_mode = F
                          "pert_labels_plus_pca20",
                          "pert_labels_plus_pca30",
                          "pert_labels_plus_pca50" ),
-      shrinkage_param = NA,
+      shrinkage_param = NA, 
+      proportion_removed = c(0.1),
       seed = 1
     ),
     # study confounder handling
@@ -79,10 +85,16 @@ test_mode = F
                          "pert_labels_plus_pca20",
                          "pert_labels_plus_pca30",
                          "pert_labels_plus_pca50" ),
-      shrinkage_param = 0.001,
+      shrinkage_param = 0.001, 
+      proportion_removed = c(0.1),
       seed = 1
     )
   )
+  # Save time by not re-doing settings shared across experiments.
+  # change the seed explicitly if you want replicates.
+  conditions = conditions[!duplicated(conditions),] 
+  # Currently auto-remove outliers only for Gaussians (not mixtures)
+  conditions = subset(conditions, proportion_removed==0 | (knockoff_type %in% GAUSSIAN_KNOCKOFF_STRATEGIES ) )
   write.csv(conditions, "experiments_to_run.csv")
 }
 
@@ -766,8 +778,116 @@ for(bias in c("positive", "negative")){
     write.csv("GoldStandardProperties.csv")
 }
 
+#' Estimate covariance many different ways. 
+#'
+#' Usually called via make_knockoffs, not directly.
+#' 
+estimate_covariance = function(X, method){
+  if (method == "sample"){
+    Sigma = cov(X)
+  } else if (method == "bagging"){
+    Sigma = boot::boot(X, statistic = function(original, idx) c(cov(original[idx,])), R = 50)
+    Sigma = matrix(colSums(Sigma$t), ncol = ncol(X))
+  } else if (method == "shrinkage"){
+    if(is.na(shrinkage_param)){
+      off_diagonal_shrinkage = corpcor::estimate.lambda(X)
+    } else {
+      off_diagonal_shrinkage = shrinkage_param
+    }
+    Sigma = as(corpcor::cor.shrink(X), "matrix")
+  } else if (method == "glasso"){
+    glasso_out = glasso::glasso(cov(X), rho = shrinkage_param, penalize.diagonal = F)
+    Sigma = glasso_out$w
+    write.table( mean(glasso_out$wi!=0), ("glasso_wi_fraction_nonzero.csv"))
+  } else {
+    print(paste("Method:", method))
+    stop("Invalid 'method'") 
+  }
+  return(Sigma)
+}
 
-make_knockoffs = function(ecoli_tf_expression_working_copy, confounder_indicators, knockoff_type){
+#' Set knockoffs equal to original data for the most difficult observations. Then re-fit. 
+#'
+#' @param X data
+#' @param proportion_removed fraction to treat as outliers.
+#' @param ... passed to estimate_covariance 
+#' 
+#' Usually called via make_knockoffs, not directly.
+#' 
+make_knockoffs_remove_outliers = function(X, proportion_removed, method){
+  if(proportion_removed==0){
+    Xin = X
+  } else {
+    # remove outliers, re-estimate covariance
+    Sigma = estimate_covariance(X, method)
+    Z = scale(X, center = T, scale = F)
+    mahalanobis = diag(Z %*% solve(Sigma, t(Z)))
+    outliers = mahalanobis>quantile(mahalanobis, 1-proportion_removed)
+    Xout = X[outliers,]
+    Xin = X[!outliers,]
+  }
+
+  Sigma = estimate_covariance(Xin, method)
+  # For TF targets, use fast leave-one-out knockoffs (LOOKs).
+  # This output contains all of them in a compact form.
+  # Realize them later on using rlookc::formOneLook.
+  looks_compact_inliers = rlookc::generateLooks(
+    Xin,
+    mu = colMeans(Xin),
+    Sigma = Sigma,
+    statistic = fast_lasso_penalty,
+    output_type = "knockoffs_compact",
+    vars_to_omit = seq(ncol(X))
+  )
+
+  # That was just the inliers. For the outliers, we'll copy the original data. 
+  # Now we need to intersperse them properly.
+  # Empty containers in the right shape
+  if(proportion_removed==0){
+    return(looks_compact_inliers)
+  } else {
+    looks_compact = list(
+      knockoffs = matrix(0, nrow = nrow(X), ncol = ncol(X)),
+      updates =
+        rep(
+          x = list( list(
+            mean_update_left  = matrix(0, nrow = nrow(X)),
+            mean_update_right = matrix(0, ncol = ncol(X) - 1),
+            sqrt_cov_update   = matrix(0, ncol = ncol(X) - 1),
+            random_update     = matrix(0, nrow = nrow(X))
+          ) ),
+          length.out = ncol(X)
+        ),
+      vars_to_omit = 1:ncol(X)
+    )
+    # Fill it in 
+    looks_compact[["knockoffs"]][!outliers,] = looks_compact_inliers$knockoffs
+    looks_compact[["knockoffs"]][outliers,] = X[outliers,]
+    for(left_out in names(looks_compact[["updates"]])){
+      for(update_type in c( "mean_update_left",
+                            "random_update")  ){
+        # Inliers are taken care of by previous code.
+        looks_compact          [["updates"]][left_out][update_type][!outliers,] = 
+          looks_compact_inliers[["updates"]][left_out][update_type] 
+        # Outliers need no update.
+        # Copying part of the data is copying part of the data whether or not a given var is included. 
+        looks_compact          [["updates"]][left_out][update_type][outliers,] = 0
+      }     
+      for(update_type in c( "mean_update_right", 
+                            "sqrt_cov_update" )  ){
+        looks_compact          [["updates"]][left_out][update_type] = 
+          looks_compact_inliers[["updates"]][left_out][update_type] 
+      }
+    }
+  }
+  return(looks_compact)
+}
+
+#' This is the main user-facing code to make knockoffs during each experiment.
+#'
+#' Takes care of correcting for PC's and making knockoffs under all different types of models and covariance estimates. 
+#' 
+make_knockoffs = function(ecoli_tf_expression_working_copy, confounder_indicators, knockoff_type, proportion_removed = 0){
   X = cbind(ecoli_tf_expression_working_copy, confounder_indicators)
   if(knockoff_type == "mixture"){
     ecoli_tf_expression_working_copy_knockoffs =
@@ -777,44 +897,21 @@ make_knockoffs = function(ecoli_tf_expression_working_copy, confounder_indicator
         hard_assignments = clusters$cluster
       )
   } else if(knockoff_type == "naive"){
-    # Assumes variables are in columns! Otherwise you're
-    # scrambling all genes within a sample, not all samples within a gene.
     ecoli_tf_expression_working_copy_knockoffs = apply(X, 2, sample, replace = F)
-  } else if (knockoff_type=="sample"){
-    Sigma = cov(X)
-  } else if (knockoff_type == "shrinkage"){
-    if(is.na(shrinkage_param)){
-      off_diagonal_shrinkage = corpcor::estimate.lambda(X)
-    } else {
-      off_diagonal_shrinkage = shrinkage_param
-    }
-    Sigma = as(corpcor::cor.shrink(X), "matrix")
-  } else if (knockoff_type == "glasso"){
-    glasso_out = glasso::glasso(cov(X), rho = shrinkage_param, penalize.diagonal = F)
-    Sigma = glasso_out$w
-    write.table( mean(glasso_out$wi!=0), ("glasso_wi_fraction_nonzero.csv"))
-  }
-  
-  if(knockoff_type %in% c("glasso", "sample", "shrinkage")){
+  } else if(knockoff_type %in% GAUSSIAN_KNOCKOFF_STRATEGIES){
     # These methods differ only in the covariance estimate Sigma, done above, but
     # otherwise they're the same.
-    ecoli_tf_expression_working_copy_knockoffs = rlookc::computeGaussianKnockoffs(X, Sigma = Sigma)
-    # For TF targets, use fast leave-one-out knockoffs (LOOKs).
-    # This output contains all of them in a compact form.
-    # Realize them later on using rlookc::formOneLook.
-    looks_compact = rlookc::generateLooks(
-      X,
-      mu = colMeans(X),
-      Sigma = Sigma,
-      statistic = fast_lasso_penalty,
-      output_type = "knockoffs_compact",
-      vars_to_omit = seq(ncol(ecoli_tf_expression_working_copy))
-    )
-  } else if(knockoff_type %in% c("naive", "mixture")){
-    # Sometimes, efficient code to make LOOKs is not available.
-    # So that the code downstream can remain the same, I pretend to make
-    # LOOKs inside the same data structure used above, even when they just contain
-    # the full knockoffs unmodified.
+    Sigma = estimate_covariance(X, method = knockoff_type)
+    looks_compact = make_knockoffs_remove_outliers(X, proportion_removed = proportion_removed, method = knockoff_type)
+    ecoli_tf_expression_working_copy_knockoffs = looks_compact$knockoffs
+  } else {
+    stop("Knockoff type not recognized.\n")
+  }
+  # Sometimes, dedicated efficient code to make LOOKs is not yet available.
+  # So that the code downstream can remain the same, I pretend to make
+  # LOOKs inside the same data structure used above, even when they just contain
+  # the full knockoffs unmodified.
+  if(knockoff_type %in% c("naive", "mixture")){
     looks_compact = list(
       knockoffs = ecoli_tf_expression_working_copy_knockoffs,
       updates =
@@ -829,10 +926,8 @@ make_knockoffs = function(ecoli_tf_expression_working_copy, confounder_indicator
         ),
       vars_to_omit = 1:334
     )
-  } else {
-    warning("Knockoff type not recognized.\n")
-    break
   }
+  
   # If confounders were included in knockoff generation, strip them out.
   ecoli_tf_expression_working_copy_knockoffs = ecoli_tf_expression_working_copy_knockoffs[,1:334]
   list(ecoli_tf_expression_working_copy_knockoffs, looks_compact)
@@ -923,26 +1018,30 @@ do_one = function(condition_index, omit_knockout_evaluation_samples = F, reuse_r
         }
         
         # Make knockoffs. Check fit.
-        cat("\nMaking knockoffs.\n")
+        cat("\nConstructing knockoffs...\n")
         l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
                            confounder_indicators = confounder_indicators,
-                           knockoff_type = knockoff_type)
+                           knockoff_type = knockoff_type, 
+                           proportion_removed = proportion_removed)
+        print("... knockoffs ready.")
         ecoli_tf_expression_working_copy_knockoffs = l[[1]]
         looks_compact = l[[2]]
         rm(l)
         write.csv(ecoli_tf_expression_working_copy_knockoffs, "knockoffs.csv")
         
         # Check power: how different are knockoffs from original features?
+        cat("\nChecking correlation of variables vs their knockoffs.")
         cor_with_knockoffs = cor(ecoli_tf_expression_working_copy_knockoffs, ecoli_tf_expression_working_copy) %>% diag
         data.frame( cor_with_knockoffs,
-                    is_decoy = grepl("DECOY", ecoli_anonymization_by_name[names(cor_with_knockoffs)])) %>%
+                    is_decoy = grepl("DECOY", ecoli_anonymization_by_name[colnames(ecoli_tf_expression_working_copy)])) %>%
           ggplot() +
           geom_histogram(aes(x = cor_with_knockoffs, fill = is_decoy, bins = 30)) +
           ggtitle("Correlation of each TF with its knockoff")
         ggsave(("correlations_with_knockoffs.pdf"), width = 5, height = 3)
         
         # Check calibration for batch adjustment.
-        # No association should be detected with factors explicitly conditioned on.
+        # No association should be detected with factors explicitly conditioned on.        
+        cat("\nChecking association with known confounders.")
         if(condition_on!="none"){
           confounder_association_qvals =
             rlookc::knockoffQvals(
@@ -976,7 +1075,8 @@ do_one = function(condition_index, omit_knockout_evaluation_samples = F, reuse_r
               cat( "\n  Target", i, "reached. Remaking knockoffs. ")
               l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
                                  confounder_indicators = confounder_indicators,
-                                 knockoff_type = knockoff_type)
+                                 knockoff_type = knockoff_type, 
+                                 proportion_removed = proportion_removed)
               ecoli_tf_expression_working_copy_knockoffs = l[[1]]
               looks_compact = l[[2]]
               rm(l)

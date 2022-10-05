@@ -91,15 +91,16 @@ dir.create("figures", recursive = T, showWarnings = F)
         seed==1 &
         !address_genetic_perturbations
     ) %>%
-    head(7) %>%
+    dplyr::mutate(proportion_removed = as.character(proportion_removed)) %>%
     dplyr::mutate(knockoff_method = reorder(knockoff_method, KNN_exchangeability_proportion)) %>%
     tidyr::pivot_longer(cols = c("KNN_exchangeability_proportion", "KNN_exchangeability_p"), 
                         names_prefix = "KNN_exchangeability_") %>%
     ggplot() +
     geom_bar(aes(
       x = knockoff_method,
-      y = value
-    ), stat = "identity") +
+      y = value, 
+      fill = proportion_removed
+    ), stat = "identity", position = "dodge") +
     facet_wrap(~name, scales = "free_y") + 
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
     geom_hline(data = data.frame(name = "proportion", value = 0.5), aes(yintercept = value), color = "red") +
@@ -110,15 +111,16 @@ dir.create("figures", recursive = T, showWarnings = F)
 
 # Fig <ecoli> B) Simulated target genes
 {
-  calibration_sim %>%
+  calibration_sim %>%   
+    dplyr::mutate(proportion_removed = as.character(proportion_removed)) %>%
     subset(condition_on == "none" & !address_genetic_perturbations & seed==1) %>%
     ggplot() +
-    geom_line(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
-    geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = knockoff_method)) +
+    geom_line(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, linetype = proportion_removed)) +
+    geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = proportion_removed)) +
     geom_abline(aes(slope = 1, intercept = 0)) +
     ggtitle("Calibration by method", subtitle = "Simulated target genes") +
     scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
-    scale_y_continuous(breaks = (0:2)/2, limits = 0:1) + 
+    scale_y_continuous(breaks = (0:2)/2, limits = 0:1) +
     coord_fixed() 
   ggsave("figures/simulated_targets.pdf", width = 4, height = 3)
   ggsave("figures/simulated_targets.svg", width = 4, height = 3)
@@ -145,11 +147,11 @@ dir.create("figures", recursive = T, showWarnings = F)
                         xmax = empirical_fdr + moe_95, 
                         x = empirical_fdr,
                         color = nominal_fdr, 
-                        shape = do_omit_possible_spouses), 
+                        shape = proportion_removed), 
                     position = position_dodge(0.5)) +    
     facet_wrap(~wrapFacetLabels( gold_standard_name ) ) +
     geom_vline(aes(xintercept = as.numeric(nominal_fdr), color = nominal_fdr)) +
-    ggtitle("Calibration across various gold standards") +
+    ggtitle("Calibration across various gold standards", subtitle = "Faceted by gold standard:") +
     scale_x_continuous(breaks = (0:2)/2, limits = 0:1) 
   ggsave("figures/real_target_genes.pdf", width = 7.5, height = 4)
   ggsave("figures/real_target_genes.svg", width = 7.5, height = 4)
