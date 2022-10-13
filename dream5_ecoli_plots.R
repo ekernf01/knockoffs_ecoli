@@ -1,4 +1,3 @@
-#setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v28")
 source("../dream5_ecoli_setup.R")
 fillna =function(x, filler){ x[is.na(x)] = filler; x}
 wrapFacetLabels = function(x){
@@ -40,23 +39,29 @@ for(omit_knockout_evaluation_samples in c(T, F)){
           conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
           umaps[[condition_index]] = umap::umap(knockoffs[[condition_index]], random.state = 0) %>% extract2("layout")
           umaps[[condition_index]]           %<>% merge(conditions[condition_index,])
-          calibration_sim[[condition_index]] = read.csv("average_case_calibration.csv", row.names = 1) %>%
-            colMeans %>%
-            (function(x) data.frame(nominal_fdr = gsub("^X", "", names(x)) %>% as.numeric, empirical_fdr = x))
-          calibration_sim[[condition_index]] %<>% merge(conditions[condition_index,])
+          # Wrapped in trycatch because sometimes we don't do this. 
+          calibration_sim[[condition_index]] = tryCatch(
+            {
+              read.csv("average_case_calibration.csv", row.names = 1) %>%
+                colMeans %>%
+                (function(x) data.frame(nominal_fdr = gsub("^X", "", names(x)) %>% as.numeric, empirical_fdr = x)) %>% 
+                merge(conditions[condition_index,])
+            },
+            error = function(e) data.frame()
+          )
         })
       }
       # check vs various gold standards
       for( gold_standard_name in names(ecoli_networks) ){
         try(silent = T,
-          {
-            i = i + 1
-            withr::with_dir(file.path(working_directory, gold_standard_name), {
-              calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
-              calibration_gs[[i]] %<>% merge(conditions[condition_index,])
-              calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
+            {
+              i = i + 1
+              withr::with_dir(file.path(working_directory, gold_standard_name), {
+                calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
+                calibration_gs[[i]] %<>% merge(conditions[condition_index,])
+                calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
+              })
             })
-          })
       }
     })
   }
@@ -68,6 +73,22 @@ conditions_with_summaries %<>% mutate( knockoff_method = paste0(knockoff_type, "
 umaps %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_gs %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_sim %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
+# GeneNet benchmarks were done separately.
+genets_benchmark =
+  readRDS("genets_benchmark/calibration_simulated_y_nonlinear.Rdata")$calibration$fdr %>%   
+  colMeans %>%
+  (function(x) data.frame(nominal_fdr = gsub("^X", "", names(x)) %>% as.numeric, empirical_fdr = x)) %>%
+  dplyr::mutate(knockoff_type = "GeneNets (not knockoff-based)", 
+                address_genetic_perturbations = F, 
+                condition_on = "none", 
+                shrinkage_param = 0.0364,
+                proportion_removed = 0,
+                do_simulate_y = T,
+                seed = 1, 
+                omit_knockout_evaluation_samples = F, 
+                knockoff_method = "GeneNets (not knockoff-based)" )
+calibration_sim %<>% rbind(genets_benchmark)
+
 
 # Coarsely categorize gold standards for certain plots
 calibration_gs %<>% 
@@ -96,34 +117,42 @@ dir.create("figures", recursive = T, showWarnings = F)
     tidyr::pivot_longer(cols = c("KNN_exchangeability_proportion", "KNN_exchangeability_p"), 
                         names_prefix = "KNN_exchangeability_") %>%
     ggplot() +
-    geom_bar(aes(
+    geom_point(aes(
       x = knockoff_method,
       y = value, 
-      fill = proportion_removed
+      fill = proportion_removed,
+      color = proportion_removed
     ), stat = "identity", position = "dodge") +
-    facet_wrap(~name, scales = "free_y") + 
+    facet_wrap(~name) + 
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
     geom_hline(data = data.frame(name = "proportion", value = 0.5), aes(yintercept = value), color = "red") +
     ggtitle("KNN exchangeability test")
-  ggsave("figures/exchangeability.pdf", width = 4, height = 3)
-  ggsave("figures/exchangeability.svg", width = 4, height = 3)
+  ggsave("figures/exchangeability.pdf", width = 5, height = 3)
+  ggsave("figures/exchangeability.svg", width = 5, height = 3)
 }
 
 # Fig <ecoli> B) Simulated target genes
 {
   calibration_sim %>%   
     dplyr::mutate(proportion_removed = as.character(proportion_removed)) %>%
-    subset(condition_on == "none" & !address_genetic_perturbations & seed==1) %>%
+    subset(T & 
+             condition_on == "none" & 
+             !address_genetic_perturbations & 
+             seed==1 &
+             proportion_removed == 0
+           ) %>%
+    subset(do_simulate_y) %>%
+    subset(!is.na(knockoff_method)) %>%
     ggplot() +
-    geom_line(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, linetype = proportion_removed)) +
-    geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, shape = proportion_removed)) +
+    geom_line( aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, linetype = knockoff_method)) +
+    geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method,    shape = knockoff_method)) +
     geom_abline(aes(slope = 1, intercept = 0)) +
     ggtitle("Calibration by method", subtitle = "Simulated target genes") +
     scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
     scale_y_continuous(breaks = (0:2)/2, limits = 0:1) +
     coord_fixed() 
-  ggsave("figures/simulated_targets.pdf", width = 4, height = 3)
-  ggsave("figures/simulated_targets.svg", width = 4, height = 3)
+  ggsave("figures/simulated_targets.pdf", width = 5, height = 4)
+  ggsave("figures/simulated_targets.svg", width = 5, height = 4)
 }
 
 # Fig <ecoli> C) Real target genes (various gold standards)
@@ -135,19 +164,22 @@ dir.create("figures", recursive = T, showWarnings = F)
     subset(
       !omit_knockout_evaluation_samples &
         condition_on == "none" &
+        do_simulate_y &
+        proportion_removed == 0 &
         seed==1 &
         !address_genetic_perturbations &
         nominal_fdr %in% c(0.2, 0.5) & 
         gold_standard_name %in% most_important_gold_standards
       ) %>%
     dplyr::mutate(nominal_fdr = as.character(nominal_fdr)) %>%
+    dplyr::mutate(proportion_removed = as.character(proportion_removed)) %>%
     ggplot() +
     geom_pointrange(aes(y = knockoff_method, 
                         xmin = empirical_fdr - moe_95, 
                         xmax = empirical_fdr + moe_95, 
                         x = empirical_fdr,
                         color = nominal_fdr, 
-                        shape = proportion_removed), 
+                        shape = do_omit_possible_spouses), 
                     position = position_dodge(0.5)) +    
     facet_wrap(~wrapFacetLabels( gold_standard_name ) ) +
     geom_vline(aes(xintercept = as.numeric(nominal_fdr), color = nominal_fdr)) +
@@ -163,6 +195,7 @@ dir.create("figures", recursive = T, showWarnings = F)
     subset(
       !omit_knockout_evaluation_samples &
         knockoff_method == "glasso_0.001" &
+        proportion_removed == 0 &
         seed==1 &
         !address_genetic_perturbations &
         nominal_fdr %in% c(0.2, 0.5)& 
@@ -195,6 +228,8 @@ dir.create("figures", recursive = T, showWarnings = F)
                                     "address_genetic_perturbations" = F,
                                     "omit_knockout_evaluation_samples" = F,
                                     "condition_on"  = "none"   ,
+                                    "proportion_removed" = 0,
+                                    "do_simulate_y" = F,
                                     "seed"    = 1))
   umaps %>%
     rbind(umap_actual) %>%

@@ -1,4 +1,3 @@
-# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v28/")
 suppressPackageStartupMessages({
   library("dplyr")
   library("ggplot2")
@@ -6,7 +5,6 @@ suppressPackageStartupMessages({
   library("glasso")
   library("mclust")
   library("limma")
-  
 })
 set.seed(0)
 sink("sessionInfo.txt")
@@ -41,15 +39,17 @@ test_mode = F
       condition_on = c( "none" ),
       shrinkage_param = NA,      
       proportion_removed = c(0),
+      do_simulate_y = F,
       seed = 1:5
     ),
     # study knockoff generation methods
     expand.grid(
-      knockoff_type = c("sample", "naive", "shrinkage", "mixture", "bagging"),
+      knockoff_type = c("sample", "naive", "shrinkage", "mixture"),
       address_genetic_perturbations = c( F ),
       condition_on = c( "none"),
       shrinkage_param = NA,
       proportion_removed = c(0, 0.1),
+      do_simulate_y = T,
       seed = 1
     ),
     # study other knockoff generation methods
@@ -57,22 +57,9 @@ test_mode = F
       knockoff_type = c( "glasso"),
       address_genetic_perturbations = c( F ),
       condition_on = c( "none"),
-      shrinkage_param = c(0.1, 0.01, 0.001),
+      shrinkage_param = c(0.01, 0.001, 0.0001),
       proportion_removed = c(0, 0.1),
-      seed = 1
-    ),
-    # study confounder handling
-    expand.grid(
-      knockoff_type = c("sample"),
-      address_genetic_perturbations = c( F, T ),
-      condition_on = c(  "none",
-                         "pert_labels",
-                         "pert_labels_plus_pca10",
-                         "pert_labels_plus_pca20",
-                         "pert_labels_plus_pca30",
-                         "pert_labels_plus_pca50" ),
-      shrinkage_param = NA, 
-      proportion_removed = c(0.1),
+      do_simulate_y = T,
       seed = 1
     ),
     # study confounder handling
@@ -86,7 +73,8 @@ test_mode = F
                          "pert_labels_plus_pca30",
                          "pert_labels_plus_pca50" ),
       shrinkage_param = 0.001, 
-      proportion_removed = c(0.1),
+      proportion_removed = c(0),
+      do_simulate_y = F,
       seed = 1
     )
   )
@@ -449,7 +437,7 @@ add_negatives_if_none = function(DF, possible_targets = unique(DF$Gene2_name), w
   DF[["is_confirmed"]][is.na(DF[["is_confirmed"]])] = F
   DF
 }
-# Quick test
+# Test
 # add_negatives(data.frame(Gene1_name = 1:2, Gene2_name = 1:2, is_confirmed = T))
 ecoli_networks %<>% lapply(add_negatives_if_none, warn = F, force = F)
 
@@ -778,10 +766,28 @@ for(bias in c("positive", "negative")){
     write.csv("GoldStandardProperties.csv")
 }
 
+#' Test gaussian mixture models on the M3 data.
+#' 
+compare_mixture_models = function(X, output_name = "mclust_bic") {
+  mclust_bic = list(
+    log2_data     = mclust::mclustBIC(X %>% log2, G = c(1:10, 15, 20, 25, 50, 100)),
+    original_data = mclust::mclustBIC(X,          G = c(1:10, 15, 20, 25, 50, 100))
+  )
+  saveRDS(mclust_bic, paste0(output_name, ".Rdata"))
+  write.csv(
+    mclust_bic %>%
+      lapply(divide_by, 1e3) %>%
+      lapply(round) %>% 
+      mapply(cbind, ., transformation = names(mclust_bic), SIMPLIFY = F) %>% 
+      Reduce(f=rbind),
+    paste0(output_name, ".csv")
+  )
+}
+
 #' Estimate covariance many different ways. 
 #'
-#' Usually called via make_knockoffs, not directly.
-#' 
+#' Usually called via make_knockoffs, not directly. For 'naive' and 'mixtures' methods, returns NULL.
+#' For "sample", "bagging", "shrinkage", "glasso", returns a P by P covariance matrix estimate; P=ncol(X).
 estimate_covariance = function(X, method){
   if (method == "sample"){
     Sigma = cov(X)
@@ -799,9 +805,10 @@ estimate_covariance = function(X, method){
     glasso_out = glasso::glasso(cov(X), rho = shrinkage_param, penalize.diagonal = F)
     Sigma = glasso_out$w
     write.table( mean(glasso_out$wi!=0), ("glasso_wi_fraction_nonzero.csv"))
+  } else if (method %in% c("mixture", "naive")) {
+    return(NULL)
   } else {
-    print(paste("Method:", method))
-    stop("Invalid 'method'") 
+    stop(paste0("Invalid 'method' arg ", method, " in estimate_covariance."))
   }
   return(Sigma)
 }
@@ -814,27 +821,30 @@ estimate_covariance = function(X, method){
 #' 
 #' Usually called via make_knockoffs, not directly.
 #' 
-make_knockoffs_remove_outliers = function(X, proportion_removed, method){
+make_knockoffs_remove_outliers = function(X, proportion_removed, method, Sigma = NULL){
+  if(is.null(Sigma)){
+    Sigma = estimate_covariance(X, method = method)
+  }
   if(proportion_removed==0){
     Xin = X
+    Sigma_in = Sigma
   } else {
     # remove outliers, re-estimate covariance
-    Sigma = estimate_covariance(X, method)
     Z = scale(X, center = T, scale = F)
     mahalanobis = diag(Z %*% solve(Sigma, t(Z)))
     outliers = mahalanobis>quantile(mahalanobis, 1-proportion_removed)
     Xout = X[outliers,]
     Xin = X[!outliers,]
+    Sigma_in = estimate_covariance(Xin, method)
   }
 
-  Sigma = estimate_covariance(Xin, method)
   # For TF targets, use fast leave-one-out knockoffs (LOOKs).
   # This output contains all of them in a compact form.
   # Realize them later on using rlookc::formOneLook.
   looks_compact_inliers = rlookc::generateLooks(
     Xin,
     mu = colMeans(Xin),
-    Sigma = Sigma,
+    Sigma = Sigma_in,
     statistic = fast_lasso_penalty,
     output_type = "knockoffs_compact",
     vars_to_omit = seq(ncol(X))
@@ -887,7 +897,7 @@ make_knockoffs_remove_outliers = function(X, proportion_removed, method){
 #'
 #' Takes care of correcting for PC's and making knockoffs under all different types of models and covariance estimates. 
 #' 
-make_knockoffs = function(ecoli_tf_expression_working_copy, confounder_indicators, knockoff_type, proportion_removed = 0){
+make_knockoffs = function(ecoli_tf_expression_working_copy, confounder_indicators, knockoff_type, proportion_removed = 0, Sigma = NULL){
   X = cbind(ecoli_tf_expression_working_copy, confounder_indicators)
   if(knockoff_type == "mixture"){
     ecoli_tf_expression_working_copy_knockoffs =
@@ -901,8 +911,7 @@ make_knockoffs = function(ecoli_tf_expression_working_copy, confounder_indicator
   } else if(knockoff_type %in% GAUSSIAN_KNOCKOFF_STRATEGIES){
     # These methods differ only in the covariance estimate Sigma, done above, but
     # otherwise they're the same.
-    Sigma = estimate_covariance(X, method = knockoff_type)
-    looks_compact = make_knockoffs_remove_outliers(X, proportion_removed = proportion_removed, method = knockoff_type)
+    looks_compact = make_knockoffs_remove_outliers(X, proportion_removed = proportion_removed, method = knockoff_type, Sigma = Sigma)
     ecoli_tf_expression_working_copy_knockoffs = looks_compact$knockoffs
   } else {
     stop("Knockoff type not recognized.\n")
@@ -936,232 +945,253 @@ make_knockoffs = function(ecoli_tf_expression_working_copy, confounder_indicator
 # One experiment, e.g. "gaussian knockoffs with glasso 0.001 covariance estimate, correcting for 20 principal components 
 # and with no special handling of genetic perturbations."
 do_one = function(condition_index, omit_knockout_evaluation_samples = F, reuse_results = F){
-  withr::with_output_sink(file.path("logs", condition_index), {
-    cat("\n======================================\n")
-    cat("Experiment", condition_index, "of", nrow(conditions), '\n')
-    cat(  "======================================\n")
-    attach(conditions[condition_index,], warn.conflicts = F)
-    tryCatch(set.seed(seed), error = function(e){warning("Random seed not found and not set.\n")})
-    working_directory = ""
-    conditions$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
-    for(j in seq_along(conditions[condition_index,])){
-      prefix = paste0( colnames(conditions)[[j]], "=", conditions[condition_index, j] )
-      working_directory %<>% file.path(prefix, .)
-    }
-    
-    ecoli_metadata_working_copy = ecoli_metadata
-    ecoli_expression_working_copy = ecoli_expression
-    ecoli_tf_expression_working_copy = ecoli_tf_expression
-    if(omit_knockout_evaluation_samples){
-      samples_to_keep = !(ecoli_metadata$X.Experiment %in% ecoli_networks$knockout$X.Experiment)
-      ecoli_metadata_working_copy      %<>% extract(samples_to_keep, )
-      ecoli_expression_working_copy    %<>% extract(samples_to_keep, )
-      ecoli_tf_expression_working_copy %<>% extract(samples_to_keep, )
-      stopifnot(nrow(ecoli_metadata_working_copy)==nrow(ecoli_expression_working_copy))
-    } 
-    
-    cat("\nTesting condition:", working_directory, "\n")
-    dir.create(working_directory, recursive = T, showWarnings = F)
-    withr::with_dir(
-      working_directory,
-      try({
-        if( address_genetic_perturbations ){
-          # When predicting targets of G, if G was knocked out, set expression to 0.
-          # If G was overexpressed, leave expression as is.
-          # Do this before constructing knockoffs.
-          for(i in seq_along(ecoli_metadata_working_copy[["DeletedGenes"]])){
-            g = ecoli_metadata_working_copy[["DeletedGenes"]][[i]]
-            if(!is.na(g)){
-              ecoli_expression_working_copy[i, strsplit(g, ",")[[1]]] = 0
+  stopifnot(condition_index %in% seq_along(conditions[[1]]))
+  withr::with_message_sink(file.path("logs", condition_index), {
+    withr::with_output_sink(file.path("logs", condition_index), {
+      cat("\n======================================\n")
+      cat("Experiment", condition_index, "of", nrow(conditions), '\n')
+      cat(  "======================================\n")
+      attach(conditions[condition_index,], warn.conflicts = F)
+      tryCatch(set.seed(seed), error = function(e){warning("Random seed not found and not set.\n")})
+      working_directory = ""
+      conditions$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
+      for(j in seq_along(conditions[condition_index,])){
+        prefix = paste0( colnames(conditions)[[j]], "=", conditions[condition_index, j] )
+        working_directory %<>% file.path(prefix, .)
+      }
+      
+      ecoli_metadata_working_copy = ecoli_metadata
+      ecoli_expression_working_copy = ecoli_expression
+      ecoli_tf_expression_working_copy = ecoli_tf_expression
+      if(omit_knockout_evaluation_samples){
+        samples_to_keep = !(ecoli_metadata$X.Experiment %in% ecoli_networks$knockout$X.Experiment)
+        ecoli_metadata_working_copy      %<>% extract(samples_to_keep, )
+        ecoli_expression_working_copy    %<>% extract(samples_to_keep, )
+        ecoli_tf_expression_working_copy %<>% extract(samples_to_keep, )
+        stopifnot(nrow(ecoli_metadata_working_copy)==nrow(ecoli_expression_working_copy))
+      } 
+      
+      cat("\nTesting condition:", working_directory, "\n")
+      dir.create(working_directory, recursive = T, showWarnings = F)
+      withr::with_dir(
+        working_directory,
+        tryCatch( expr = {
+          if( address_genetic_perturbations ){
+            # When predicting targets of G, if G was knocked out, set expression to 0.
+            # If G was overexpressed, leave expression as is.
+            # Do this before constructing knockoffs.
+            for(i in seq_along(ecoli_metadata_working_copy[["DeletedGenes"]])){
+              g = ecoli_metadata_working_copy[["DeletedGenes"]][[i]]
+              if(!is.na(g)){
+                ecoli_expression_working_copy[i, strsplit(g, ",")[[1]]] = 0
+              }
             }
+            # When predicting regulators of G, omit or impute any expression value that has been intervened on.
+            # To do this easily later, here's a little function.
+            
+            #' Determine samples to omit.
+            #'
+            #' Input is a gene label (matched to metadata, so anonymous as in "G2388", not 2388 or "RELA")
+            #' Output is a set of samples where that gene is intervened upon.
+            #' These are useless for determining regulators of the target gene.
+            get_samples_to_include = function(target_name){
+              stopifnot(grepl("^G", target_name)) # supposed to be anonymized names, not non-anonymized
+              !or(
+                ecoli_metadata_working_copy$DeletedGenes %>%
+                  strsplit(",") %>%
+                  sapply(function(x) is.element(target_name, x)),
+                ecoli_metadata_working_copy$OverexpressedGenes %>%
+                  strsplit(",") %>%
+                  sapply(function(x) is.element(target_name, x))
+              )
+            }
+          } else {
+            get_samples_to_include = function(x) rep(T, nrow(ecoli_metadata_working_copy))
           }
-          # When predicting regulators of G, omit or impute any expression value that has been intervened on.
-          # To do this easily later, here's a little function.
           
-          #' Determine samples to omit.
-          #'
-          #' Input is a gene label (matched to metadata, so anonymous as in "G2388", not 2388 or "RELA")
-          #' Output is a set of samples where that gene is intervened upon.
-          #' These are useless for determining regulators of the target gene.
-          get_samples_to_include = function(target_name){
-            stopifnot(grepl("^G", target_name)) # supposed to be anonymized names, not non-anonymized
-            !or(
-              ecoli_metadata_working_copy$DeletedGenes %>%
-                strsplit(",") %>%
-                sapply(function(x) is.element(target_name, x)),
-              ecoli_metadata_working_copy$OverexpressedGenes %>%
-                strsplit(",") %>%
-                sapply(function(x) is.element(target_name, x))
-            )
+          # Construct indicators for confounders
+          {
+            perturbations = model.matrix( ~Perturbations+0, ecoli_metadata_working_copy)
+            perturbations %<>% extract(,-which(colnames(perturbations) == "Perturbationsnone"))
+            pca_results = irlba::prcomp_irlba(ecoli_expression_working_copy, n = 50)
+            if(condition_on == "none"){
+              confounder_indicators = NULL
+            } else if(condition_on == "pert_labels"){
+              confounder_indicators = perturbations
+            } else if(grepl("^pert_labels_plus_pca", condition_on)){
+              n_pc = 10
+              maybe_n_pc = gsub("^pert_labels_plus_pca", "", condition_on) %>% as.numeric
+              if(!is.na(maybe_n_pc)){
+                n_pc = maybe_n_pc
+              }
+              confounder_indicators = cbind( pca_results$x[,1:n_pc], perturbations)
+            } 
           }
-        } else {
-          get_samples_to_include = function(x) rep(T, nrow(ecoli_metadata_working_copy))
-        }
-        
-        # Construct indicators for confounders
-        {
-          perturbations = model.matrix( ~Perturbations+0, ecoli_metadata_working_copy)
-          perturbations %<>% extract(,-which(colnames(perturbations) == "Perturbationsnone"))
-          pca_results = irlba::prcomp_irlba(ecoli_expression_working_copy, n = 50)
-          if(condition_on == "none"){
-            confounder_indicators = NULL
-          } else if(condition_on == "pert_labels"){
-            confounder_indicators = perturbations
-          } else if(grepl("^pert_labels_plus_pca", condition_on)){
-            n_pc = 10
-            maybe_n_pc = gsub("^pert_labels_plus_pca", "", condition_on) %>% as.numeric
-            if(!is.na(maybe_n_pc)){
-              n_pc = maybe_n_pc
-            }
-            confounder_indicators = cbind( pca_results$x[,1:n_pc], perturbations)
-          } 
-        }
-        
-        # Make knockoffs. Check fit.
-        cat("\nConstructing knockoffs...\n")
-        l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
-                           confounder_indicators = confounder_indicators,
-                           knockoff_type = knockoff_type, 
-                           proportion_removed = proportion_removed)
-        print("... knockoffs ready.")
-        ecoli_tf_expression_working_copy_knockoffs = l[[1]]
-        looks_compact = l[[2]]
-        rm(l)
-        write.csv(ecoli_tf_expression_working_copy_knockoffs, "knockoffs.csv")
-        
-        # Check power: how different are knockoffs from original features?
-        cat("\nChecking correlation of variables vs their knockoffs.")
-        cor_with_knockoffs = cor(ecoli_tf_expression_working_copy_knockoffs, ecoli_tf_expression_working_copy) %>% diag
-        data.frame( cor_with_knockoffs,
-                    is_decoy = grepl("DECOY", ecoli_anonymization_by_name[colnames(ecoli_tf_expression_working_copy)])) %>%
-          ggplot() +
-          geom_histogram(aes(x = cor_with_knockoffs, fill = is_decoy, bins = 30)) +
-          ggtitle("Correlation of each TF with its knockoff")
-        ggsave(("correlations_with_knockoffs.pdf"), width = 5, height = 3)
-        
-        # Check calibration for batch adjustment.
-        # No association should be detected with factors explicitly conditioned on.        
-        cat("\nChecking association with known confounders.")
-        if(condition_on!="none"){
-          confounder_association_qvals =
-            rlookc::knockoffQvals(
-              cor(confounder_indicators, ecoli_tf_expression_working_copy) -
-                cor(confounder_indicators, ecoli_tf_expression_working_copy_knockoffs)
+          
+          # Make knockoffs. 
+          cat("\nConstructing knockoffs...\n")
+          l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
+                             confounder_indicators = confounder_indicators,
+                             knockoff_type = knockoff_type, 
+                             proportion_removed = proportion_removed)
+          print("... knockoffs ready.")
+          ecoli_tf_expression_working_copy_knockoffs = l[[1]]
+          looks_compact = l[[2]]
+          rm(l)
+          write.csv(ecoli_tf_expression_working_copy_knockoffs, "knockoffs.csv")
+          
+          # Check power: how different are knockoffs from original features?
+          cat("\nChecking correlation of variables vs their knockoffs.")
+          cor_with_knockoffs = cor(ecoli_tf_expression_working_copy_knockoffs, ecoli_tf_expression_working_copy) %>% diag
+          data.frame( cor_with_knockoffs,
+                      is_decoy = grepl("DECOY", ecoli_anonymization_by_name[colnames(ecoli_tf_expression_working_copy)])) %>%
+            ggplot() +
+            geom_histogram(aes(x = cor_with_knockoffs, fill = is_decoy, bins = 30)) +
+            ggtitle("Correlation of each TF with its knockoff")
+          ggsave(("correlations_with_knockoffs.pdf"), width = 5, height = 3)
+          
+          # Check calibration for batch adjustment.
+          # No association should be detected with factors explicitly conditioned on.        
+          cat("\nChecking association with known confounders.")
+          if(condition_on!="none"){
+            confounder_association_qvals =
+              rlookc::knockoffQvals(
+                cor(confounder_indicators, ecoli_tf_expression_working_copy) -
+                  cor(confounder_indicators, ecoli_tf_expression_working_copy_knockoffs)
+              )
+            pdf("confounder_association_qvals.pdf", width = 5, height = 2.5)
+            hist(confounder_association_qvals, 40, xlim = 0:1)
+            dev.off()
+          }
+          
+          # Check calibration with simulated Y
+          if(do_simulate_y){
+            cat("\nChecking calibration\n")
+            Sigma = estimate_covariance(cbind(ecoli_tf_expression_working_copy, confounder_indicators), method = knockoff_type)
+            calibration_typical = rlookc::calibrate__simulateY(
+              cores = 1,
+              rng_seed = seed,
+              n_sim = 1000,
+              X = ecoli_tf_expression_working_copy %>% sweep(2, colMeans(ecoli_tf_expression_working_copy), "-"),
+              knockoffs = replicate(10, simplify = F, {
+                make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
+                               confounder_indicators = confounder_indicators,
+                               knockoff_type = knockoff_type, 
+                               Sigma = Sigma,
+                               proportion_removed = proportion_removed)[[1]] %>%
+                  sweep(2, colMeans(ecoli_tf_expression_working_copy), "-") 
+              }),
+              statistic = fast_lasso_penalty,
+              plot_savepath = ("average_case_calibration.pdf")
             )
-          pdf(("confounder_association_qvals.pdf"), width = 5, height = 2.5)
-          hist(confounder_association_qvals, 40, xlim = 0:1)
-          dev.off()
+            write.csv(calibration_typical$calibration$fdr, ("average_case_calibration.csv"))
+          }
+          # Deploy on non-TF targets
+          if(!reuse_results){
+            cat("\nComputing LASSO paths. This will take a long time.\n")
+            target_genes = colnames(ecoli_expression_working_copy) %>% setdiff(ecoli_tf[[1]])
+            w = list()
+            for(i in seq_along(target_genes)){
+              target = target_genes[[i]]
+              if(i %% 100 == 0){
+                cat( "\n  Target", i, "reached. Remaking knockoffs. ")
+                l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
+                                   confounder_indicators = confounder_indicators,
+                                   knockoff_type = knockoff_type, 
+                                   proportion_removed = proportion_removed)
+                ecoli_tf_expression_working_copy_knockoffs = l[[1]]
+                looks_compact = l[[2]]
+                rm(l)
+              }
+              samples_to_include = get_samples_to_include(target)
+              w[[target]] = fast_lasso_penalty(
+                y   = ecoli_expression_working_copy[samples_to_include,target],
+                X   = ecoli_tf_expression_working_copy[samples_to_include,],
+                X_k = ecoli_tf_expression_working_copy_knockoffs[samples_to_include,]
+              )
+            }
+            length(w[[1]])
+            length(w)
+            # Deploy on TF targets
+            cat("\n")
+            w_tf = list()
+            for(i in seq_along(ecoli_tf[[1]])){
+              target = ecoli_tf[[1]][[i]]
+              if(i %% 100 == 0){
+                cat( "\n  Target", i, "reached. Remaking knockoffs. ")
+                l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
+                                   confounder_indicators = confounder_indicators,
+                                   knockoff_type = knockoff_type)
+                ecoli_tf_expression_working_copy_knockoffs = l[[1]]
+                looks_compact = l[[2]]
+                rm(l)
+              }
+              knockoffs_minus_i = rlookc::formOneLook(
+                knockoffs = looks_compact$knockoffs,
+                updates = looks_compact$updates,
+                vars_to_omit = looks_compact$vars_to_omit,
+                k = i
+              )[,seq(ncol(ecoli_tf_expression_working_copy)-1)]
+              samples_to_include = get_samples_to_include(target)
+              w_tf[[target]] = fast_lasso_penalty(
+                y   = ecoli_expression_working_copy[samples_to_include,target],
+                X   = ecoli_tf_expression_working_copy[samples_to_include,-i],
+                X_k = knockoffs_minus_i[samples_to_include,]
+              )
+            }
+            length(w_tf[[1]])
+            length(w_tf)
+            # Assemble results nicely
+            DF_tf_target = DF_tf_tf = list()
+            for(k in seq_along(ecoli_tf[[1]])){
+              DF_tf_target[[k]] = data.frame(
+                Gene1 = ecoli_tf[[1]][-k],
+                Gene2 = ecoli_tf[[1]][ k],
+                knockoff_stat = w_tf[[k]]
+              )
+            }
+            for(k in seq_along(target_genes)){
+              DF_tf_tf[[k]] = data.frame(
+                Gene1 = ecoli_tf[[1]],
+                Gene2 = target_genes[ k],
+                knockoff_stat = w[[k]]
+              )
+            }
+            DF = data.table::rbindlist(c(DF_tf_tf, DF_tf_target))
+            signedsqrt = function(x) sign(x)*sqrt(abs(x))
+            hist(DF$knockoff_stat %>% signedsqrt, 40)
+            DF$knockoff_stat %>% median
+            write.csv(DF, ("results.csv"))
+          } else {
+            DF = read.csv("results.csv")
+          }
+          
+          # Add qvals and real gene names
+          dim(DF)
+          DF$q = DF$knockoff_stat %>% rlookc::knockoffQvals(offset = 0)
+          DF$Gene1_name = ecoli_anonymization_by_name[DF$Gene1]
+          DF$Gene2_name = ecoli_anonymization_by_name[DF$Gene2]
+          DF %<>% dplyr::mutate(Gene1_is_decoy = grepl("DECOY", Gene1_name))
+          DF %<>% dplyr::mutate(Gene2_is_decoy = grepl("DECOY", Gene2_name))
+          
+          # How many discoveries do we make?
+          {
+            pdf(("qval_distribution.pdf"))
+            plot(ecdf(DF$q), xlim = 0:1)
+            dev.off()
+          }
+          # Check against gold standards
+          check_against_gold_standards(DF)
+        }, 
+        error=function(cond) {
+          cat("Error message received:")
+          cat(cond$message)
+          return()
         }
-        
-        # Check calibration with simulated Y
-        cat("\nChecking calibration\n")
-        calibration_typical = rlookc::simulateY(
-          n_sim = 100,
-          X = ecoli_tf_expression_working_copy %>% sweep(2, colMeans(ecoli_tf_expression_working_copy), "-"),
-          knockoffs = ecoli_tf_expression_working_copy_knockoffs %>% sweep(2, colMeans(ecoli_tf_expression_working_copy), "-") ,
-          statistic = fast_lasso_penalty,
-          plot_savepath = ("average_case_calibration.pdf")
         )
-        write.csv(calibration_typical$calibration$fdr, ("average_case_calibration.csv"))
-        
-        # Deploy on non-TF targets
-        if(!reuse_results){
-          cat("\nComputing LASSO paths. This will take a long time.\n")
-          target_genes = colnames(ecoli_expression_working_copy) %>% setdiff(ecoli_tf[[1]])
-          w = list()
-          for(i in seq_along(target_genes)){
-            target = target_genes[[i]]
-            if(i %% 100 == 0){
-              cat( "\n  Target", i, "reached. Remaking knockoffs. ")
-              l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
-                                 confounder_indicators = confounder_indicators,
-                                 knockoff_type = knockoff_type, 
-                                 proportion_removed = proportion_removed)
-              ecoli_tf_expression_working_copy_knockoffs = l[[1]]
-              looks_compact = l[[2]]
-              rm(l)
-            }
-            samples_to_include = get_samples_to_include(target)
-            w[[target]] = fast_lasso_penalty(
-              y   = ecoli_expression_working_copy[samples_to_include,target],
-              X   = ecoli_tf_expression_working_copy[samples_to_include,],
-              X_k = ecoli_tf_expression_working_copy_knockoffs[samples_to_include,]
-            )
-          }
-          length(w[[1]])
-          length(w)
-          # Deploy on TF targets
-          cat("\n")
-          w_tf = list()
-          for(i in seq_along(ecoli_tf[[1]])){
-            target = ecoli_tf[[1]][[i]]
-            if(i %% 100 == 0){
-              cat( "\n  Target", i, "reached. Remaking knockoffs. ")
-              l = make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,
-                                 confounder_indicators = confounder_indicators,
-                                 knockoff_type = knockoff_type)
-              ecoli_tf_expression_working_copy_knockoffs = l[[1]]
-              looks_compact = l[[2]]
-              rm(l)
-            }
-            knockoffs_minus_i = rlookc::formOneLook(
-              knockoffs = looks_compact$knockoffs,
-              updates = looks_compact$updates,
-              vars_to_omit = looks_compact$vars_to_omit,
-              k = i
-            )[,seq(ncol(ecoli_tf_expression_working_copy)-1)]
-            samples_to_include = get_samples_to_include(target)
-            w_tf[[target]] = fast_lasso_penalty(
-              y   = ecoli_expression_working_copy[samples_to_include,target],
-              X   = ecoli_tf_expression_working_copy[samples_to_include,-i],
-              X_k = knockoffs_minus_i[samples_to_include,]
-            )
-          }
-          length(w_tf[[1]])
-          length(w_tf)
-          # Assemble results nicely
-          DF_tf_target = DF_tf_tf = list()
-          for(k in seq_along(ecoli_tf[[1]])){
-            DF_tf_target[[k]] = data.frame(
-              Gene1 = ecoli_tf[[1]][-k],
-              Gene2 = ecoli_tf[[1]][ k],
-              knockoff_stat = w_tf[[k]]
-            )
-          }
-          for(k in seq_along(target_genes)){
-            DF_tf_tf[[k]] = data.frame(
-              Gene1 = ecoli_tf[[1]],
-              Gene2 = target_genes[ k],
-              knockoff_stat = w[[k]]
-            )
-          }
-          DF = data.table::rbindlist(c(DF_tf_tf, DF_tf_target))
-          signedsqrt = function(x) sign(x)*sqrt(abs(x))
-          hist(DF$knockoff_stat %>% signedsqrt, 40)
-          DF$knockoff_stat %>% median
-          write.csv(DF, ("results.csv"))
-        } else {
-          DF = read.csv("results.csv")
-        }
-        
-        # Add qvals and real gene names
-        dim(DF)
-        DF$q = DF$knockoff_stat %>% rlookc::knockoffQvals(offset = 0)
-        DF$Gene1_name = ecoli_anonymization_by_name[DF$Gene1]
-        DF$Gene2_name = ecoli_anonymization_by_name[DF$Gene2]
-        DF %<>% dplyr::mutate(Gene1_is_decoy = grepl("DECOY", Gene1_name))
-        DF %<>% dplyr::mutate(Gene2_is_decoy = grepl("DECOY", Gene2_name))
-        
-        # How many discoveries do we make?
-        {
-          pdf(("qval_distribution.pdf"))
-          plot(ecdf(DF$q), xlim = 0:1)
-          dev.off()
-        }
-        # Check against gold standards
-        check_against_gold_standards(DF)
-      })
-    )
-    sink()
+      )
+      sink()
+    })
   })
 }
+

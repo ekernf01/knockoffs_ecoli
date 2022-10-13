@@ -5,10 +5,13 @@ dir.create(path = Sys.getenv("R_LIBS_USER"), showWarnings = FALSE, recursive = T
 install.packages("versions", lib = Sys.getenv("R_LIBS_USER"))
 library(versions)
 versions::install.dates(
-  pkgs = c("tidyverse", "magrittr", "glasso", "ggplot2", "knockoff", "irlba", "data.table", "umap", "FNN", "BiocManager", "poolr", "svglite"),
+  pkgs = c("tidyverse", "magrittr", "glasso", "ggplot2", "knockoff", "irlba", "data.table", 
+           "umap", "FNN", "BiocManager", "poolr", "svglite", "GeneNet"),
   dates = "2021-11-05", 
   lib = Sys.getenv("R_LIBS_USER")
 )
+
+
 BiocManager::install("limma", version = "3.14")
 # Install our package
 install.packages("~/rlookc", repos = NULL, type = "source", lib = Sys.getenv("R_LIBS_USER"))
