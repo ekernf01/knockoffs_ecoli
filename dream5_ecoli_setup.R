@@ -19,7 +19,7 @@ if(!dir.exists(DATALAKE)){
 }
 # otherwise, complain.
 if(!dir.exists(DATALAKE)){
-  stop("Datalake not found. Place it in '~/datalake' or Modify `dream5_ecoli_setup.R`.\n")
+  stop("Datalake not found. Place it in '~/datalake' or modify `dream5_ecoli_setup.R`.\n")
 }
 
 GAUSSIAN_KNOCKOFF_STRATEGIES = c("glasso", "sample", "shrinkage", "bagging")
@@ -497,7 +497,7 @@ ecoli_expression[1:4, 1:4]
 dim(ecoli_expression)
 ecoli_tf_expression = ecoli_expression[ecoli_tf[[1]]] %>% as.matrix
 clusters = kmeans(ecoli_expression, centers = 7)
-
+table(clusters$cluster)
 # Look at genetic perturbations' effect on expression
 try({
   perturbations = data.frame(gene = NA, direction = NA, mean_control = 0, mean_perturbed = 0)
