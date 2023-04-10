@@ -12,16 +12,15 @@ ggplot2::theme_update(text = element_text(family = "ArialMT"))
 # Collect results to make certain key summary plots
 # This will allow us to show calibration on any combination of gold standard, knockoff construction method,
 # number of principal components, et cetera by subsetting a giant tidy dataframe. 
-cat("Loading experimental results and making UMAPs...")
+cat("Loading experimental results and making tsnes...")
 conditions_with_summaries = conditions = read.csv("experiments_to_run.csv", row.names = 1)
-exchangeability = umaps = knockoffs = calibration_sim = calibration_gs = list()
+exchangeability = tsnes = knockoffs = calibration_sim = calibration_gs = list()
 i = 0
 for(omit_knockout_evaluation_samples in c(T, F)){
   for(condition_index in nrow(conditions):1){
     try({
       conditions$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
       conditions_with_summaries$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
-      offset = omit_knockout_evaluation_samples*nrow(conditions)
       write.table(conditions[condition_index,], sep = "\t", quote = F)
       attach(conditions[condition_index,], warn.conflicts = F)
       working_directory = ""
@@ -29,22 +28,20 @@ for(omit_knockout_evaluation_samples in c(T, F)){
         prefix = paste0( colnames(conditions)[[j]], "=", conditions[condition_index, j] )
         working_directory %<>% file.path(prefix, .)
       }
-      # Check out the knockoffs via UMAP and KNN exchangeability test
+      # Check out the knockoffs via tsne and KNN exchangeability test
       # This is more complex if done with knockout samples included & excluded; we just do included
       if(!omit_knockout_evaluation_samples){ 
         withr::with_dir(working_directory, {
-          knockoffs[[condition_index + offset]] = read.csv("knockoffs.csv", row.names = 1)
+          knockoffs[[condition_index]] = read.csv("knockoffs.csv", row.names = 1) %>% set_colnames(NULL)
           exchangeability[[condition_index]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])
           conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
           conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
-          umaps[[condition_index]] = umap::umap(knockoffs[[condition_index]], random.state = 0) %>% extract2("layout")
-          umaps[[condition_index]]           %<>% merge(conditions[condition_index,])
           # Wrapped in trycatch because sometimes we don't do this. 
           calibration_sim[[condition_index]] = tryCatch(
             {
               read.csv("average_case_calibration.csv", row.names = 1) %>%
                 colMeans %>%
-                (function(x) data.frame(nominal_fdr = gsub("^X", "", names(x)) %>% as.numeric, empirical_fdr = x)) %>% 
+                (function(x) data.frame(expected_fdr = gsub("^X", "", names(x)) %>% as.numeric, observed_fdr = x)) %>% 
                 merge(conditions[condition_index,])
             },
             error = function(e) data.frame()
@@ -66,18 +63,39 @@ for(omit_knockout_evaluation_samples in c(T, F)){
     })
   }
 }
-umaps %<>% data.table::rbindlist()
 calibration_gs %<>% data.table::rbindlist()
 calibration_sim %<>% data.table::rbindlist()
 conditions_with_summaries %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
-umaps %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_gs %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
 calibration_sim %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
+
+# Rename certain things to customize plots for our audience
+calibration_gs %<>% rename(expected_fdr = nominal_fdr, observed_fdr = empirical_fdr)
+prettify_names = function(df){
+  df %<>% mutate(knockoff_type = gsub("naive", "permuted", knockoff_type))
+  try({
+    df %<>% mutate(knockoff_method = gsub("naive", "permuted", knockoff_method))
+  }, silent = T)
+  df %<>% mutate(condition_on = gsub("pert_labels", "Protocol annotations", condition_on))
+  df %<>% mutate(condition_on = gsub("plus_pca", "and top PC's (", condition_on))
+  df %<>% mutate(condition_on = gsub("_", " ", condition_on))
+  df %<>% mutate(condition_on = gsub("0", "0)", condition_on))
+  df %<>% mutate(condition_on = gsub("0))", "0)", condition_on))
+  df %<>% dplyr::mutate(gold_standard_name = gsub("_intersection_", " and ", gold_standard_name)) 
+  df %<>% dplyr::mutate(gold_standard_name = gsub("_tu_augmented|_", " ", gold_standard_name)) 
+  df %<>% dplyr::mutate(gold_standard_name = gsub("new test", "validation", gold_standard_name)) 
+  return(df)
+}
+conditions %<>% prettify_names
+conditions_with_summaries %<>% prettify_names
+calibration_sim %<>% prettify_names
+calibration_gs %<>% prettify_names
+
 # GeneNet benchmarks were done separately.
 genets_benchmark =
   readRDS("genets_benchmark/calibration_simulated_y_nonlinear.Rdata")$calibration$fdr %>%   
   colMeans %>%
-  (function(x) data.frame(nominal_fdr = gsub("^X", "", names(x)) %>% as.numeric, empirical_fdr = x)) %>%
+  (function(x) data.frame(expected_fdr = gsub("^X", "", names(x)) %>% as.numeric, observed_fdr = x)) %>%
   dplyr::mutate(knockoff_type = "GeneNets (not knockoff-based)", 
                 address_genetic_perturbations = F, 
                 condition_on = "none", 
@@ -87,6 +105,7 @@ genets_benchmark =
                 seed = 1, 
                 omit_knockout_evaluation_samples = F, 
                 knockoff_method = "GeneNets (not knockoff-based)" )
+genets_benchmark %<>% prettify_names
 calibration_sim %<>% rbind(genets_benchmark)
 
 
@@ -110,7 +129,8 @@ dir.create("figures", recursive = T, showWarnings = F)
       !omit_knockout_evaluation_samples &
         condition_on == "none" &
         seed==1 &
-        !address_genetic_perturbations
+        !address_genetic_perturbations & 
+        proportion_removed==0
     ) %>%
     dplyr::mutate(proportion_removed = as.character(proportion_removed)) %>%
     dplyr::mutate(knockoff_method = reorder(knockoff_method, KNN_exchangeability_proportion)) %>%
@@ -120,9 +140,7 @@ dir.create("figures", recursive = T, showWarnings = F)
     geom_point(aes(
       x = knockoff_method,
       y = value, 
-      fill = proportion_removed,
-      color = proportion_removed
-    ), stat = "identity", position = "dodge") +
+    )) +
     facet_wrap(~name) + 
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
     geom_hline(data = data.frame(name = "proportion", value = 0.5), aes(yintercept = value), color = "red") +
@@ -144,8 +162,8 @@ dir.create("figures", recursive = T, showWarnings = F)
     subset(do_simulate_y) %>%
     subset(!is.na(knockoff_method)) %>%
     ggplot() +
-    geom_line( aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method, linetype = knockoff_method)) +
-    geom_point(aes(x = nominal_fdr, y = empirical_fdr, color = knockoff_method,    shape = knockoff_method)) +
+    geom_line( aes(x = expected_fdr, y = observed_fdr, color = knockoff_method, linetype = knockoff_method)) +
+    geom_point(aes(x = expected_fdr, y = observed_fdr, color = knockoff_method,    shape = knockoff_method)) +
     geom_abline(aes(slope = 1, intercept = 0)) +
     ggtitle("Calibration by method", subtitle = "Simulated target genes") +
     scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
@@ -158,8 +176,8 @@ dir.create("figures", recursive = T, showWarnings = F)
 # Fig <ecoli> C) Real target genes (various gold standards)
 {
   # Vary knockoff generation method (real Y, calibration)
-  most_important_gold_standards = c("dream5_new_test", "regulondb10_9", "dream5", "chip_tu_augmented", 
-                                    "chip_intersection_M3Dknockout", "chip_intersection_RegulonDB_knockout")
+  most_important_gold_standards = c(#"dream5_new_test", "regulondb10_9", "dream5", "chip_tu_augmented", 
+                                    "chip and M3Dknockout", "chip and RegulonDB knockout")
   calibration_gs %>%
     subset(
       !omit_knockout_evaluation_samples &
@@ -168,25 +186,24 @@ dir.create("figures", recursive = T, showWarnings = F)
         proportion_removed == 0 &
         seed==1 &
         !address_genetic_perturbations &
-        nominal_fdr %in% c(0.2, 0.5) & 
-        gold_standard_name %in% most_important_gold_standards
+        gold_standard_name %in% most_important_gold_standards & 
+        do_omit_possible_spouses 
       ) %>%
-    dplyr::mutate(nominal_fdr = as.character(nominal_fdr)) %>%
     dplyr::mutate(proportion_removed = as.character(proportion_removed)) %>%
-    ggplot() +
-    geom_pointrange(aes(y = knockoff_method, 
-                        xmin = empirical_fdr - moe_95, 
-                        xmax = empirical_fdr + moe_95, 
-                        x = empirical_fdr,
-                        color = nominal_fdr, 
-                        shape = do_omit_possible_spouses), 
-                    position = position_dodge(0.5)) +    
-    facet_wrap(~wrapFacetLabels( gold_standard_name ) ) +
-    geom_vline(aes(xintercept = as.numeric(nominal_fdr), color = nominal_fdr)) +
-    ggtitle("Calibration across various gold standards", subtitle = "Faceted by gold standard:") +
-    scale_x_continuous(breaks = (0:2)/2, limits = 0:1) 
-  ggsave("figures/real_target_genes.pdf", width = 7.5, height = 4)
-  ggsave("figures/real_target_genes.svg", width = 7.5, height = 4)
+    ggplot(aes(x = expected_fdr, 
+               y = observed_fdr, 
+               linetype = knockoff_method, 
+               shape = knockoff_method, 
+               color = knockoff_method)) +  
+    geom_point() + 
+    geom_line() +
+    geom_abline(yintercept=0, slope=1) +
+    facet_wrap(~wrapFacetLabels( gold_standard_name ), scales = "free_y" ) +
+    ggtitle("Calibration in gold standards based on \nChIP and perturbation transcriptomics") +
+    scale_x_continuous(breaks = (0:2)/2, limits = 0:1)  + 
+    theme(legend.position = "bottom")
+  ggsave("figures/real_target_genes.pdf", width = 6.5, height = 3.5)
+  ggsave("figures/real_target_genes.svg", width = 6.5, height = 3.5)
 }
 
 # Fig <ecoli> D) confounder adjustment
@@ -194,56 +211,85 @@ dir.create("figures", recursive = T, showWarnings = F)
   calibration_gs %>%
     subset(
       !omit_knockout_evaluation_samples &
-        knockoff_method == "glasso_0.001" &
+        knockoff_method == "glasso_1e-04" &
         proportion_removed == 0 &
         seed==1 &
         !address_genetic_perturbations &
-        nominal_fdr %in% c(0.2, 0.5)& 
+        # expected_fdr %in% c(0.2, 0.5)& 
         gold_standard_name %in% most_important_gold_standards
     ) %>%
-    dplyr::mutate(nominal_fdr = as.character(nominal_fdr)) %>%
-    ggplot() +
-    geom_pointrange(aes(y = condition_on, 
-                        xmin = empirical_fdr - moe_95, 
-                        xmax = empirical_fdr + moe_95, 
-                        x = empirical_fdr,
-                        color = nominal_fdr, 
-                        shape = do_omit_possible_spouses), 
-                    position = position_dodge(0.5)) +    
-    facet_wrap(~wrapFacetLabels( gold_standard_name ) )+
-    geom_vline(aes(xintercept = as.numeric(nominal_fdr), color = nominal_fdr)) +
+    # dplyr::mutate(expected_fdr = as.character(expected_fdr)) %>%
+    ggplot(mapping = aes(x = expected_fdr, 
+                         y = observed_fdr,
+                         color = condition_on, 
+                         shape = condition_on)) +   
+    geom_point() + 
+    geom_line() +
+    geom_abline(yintercept=0, slope=1) +
+    facet_wrap(~wrapFacetLabels( gold_standard_name ), scales = "free_y" )+
     ggtitle("Calibration when correcting for possible confounders") +
     scale_x_continuous(breaks = (0:2)/2, limits = 0:1) 
-  ggsave("figures/confounders.svg", width = 7.5, height = 4)
-  ggsave("figures/confounders.pdf", width = 7.5, height = 4)
+  ggsave("figures/confounders.svg", width = 9, height = 4)
+  ggsave("figures/confounders.pdf", width = 9, height = 4)
 }
 
-# Fig <ecolisupp> A) UMAPs
+# Fig <ecoli> F) confounder adjustment power
+{
+  calibration_gs %>%
+    subset(
+      !omit_knockout_evaluation_samples &
+        knockoff_method == "glasso_1e-04" &
+        proportion_removed == 0 &
+        seed==1 &
+        !address_genetic_perturbations &
+        gold_standard_name %in% most_important_gold_standards
+    ) %>%
+    ggplot(mapping = aes(x = expected_fdr, 
+                         y = log10(num_discoveries+1),
+                         color = condition_on, 
+                         shape = condition_on)) +   
+    geom_point() + 
+    facet_wrap(~wrapFacetLabels( gold_standard_name ) )+
+    ggtitle("Power when correcting for possible confounders") +
+    scale_x_continuous(breaks = (0:2)/2, limits = 0:1) + 
+    ylab("Log10( 1 + number of discoveries )")
+  ggsave("figures/confounders_power.svg", width = 7, height = 3.5)
+  ggsave("figures/confounders_power.pdf", width = 7, height = 3.5)
+}
+
+# Fig <ecolisupp> A) tsnes
 {
   # Visualize data and knockoffs: does the important structure seem to be captured?
-  umap_actual    = umap::umap(ecoli_tf_expression, random.state = 0) %>% extract2("layout")
-  umap_actual %<>% merge(data.frame("knockoff_type" = "real data",
-                                    "knockoff_method" = "real data",
-                                    "shrinkage_param" = NA,
-                                    "address_genetic_perturbations" = F,
-                                    "omit_knockout_evaluation_samples" = F,
-                                    "condition_on"  = "none"   ,
-                                    "proportion_removed" = 0,
-                                    "do_simulate_y" = F,
-                                    "seed"    = 1))
-  umaps %>%
-    rbind(umap_actual) %>%
-    mutate(cluster = clusters$cluster %>% rep(times = dplyr::n()/805 )) %>%
+  which_to_tsne = conditions_with_summaries %>% 
+    subset(seed==1 & condition_on == "none" & do_simulate_y & proportion_removed==0, select = "knockoff_method")
+  matrices_to_tsne = data.table::rbindlist( c( knockoffs[as.numeric(rownames(which_to_tsne))], list( data.frame( ecoli_tf_expression ) ) ) )
+  which_to_tsne[8, "knockoff_method"] = "real data"
+  set.seed(0) # make tsne repeatable
+  tsnes = tsne::tsne(matrices_to_tsne)
+  facet_order = c(
+    "real data",
+    "sample",
+    "glasso_1e-04",
+    "glasso_0.001",
+    "glasso_0.01",
+    "shrinkage", 
+    "mixture",
+    "permuted"
+  )
+  tsnes %>% 
+    as.data.frame() %>%
+    set_colnames(c("V1", "V2")) %>% 
+    mutate(knockoff_method = factor(which_to_tsne$knockoff_method %>% rep( each = 805 ), levels = facet_order)) %>%
+    mutate(cluster = clusters$cluster %>% rep(times = dplyr::n()/805) %>% as.character()) %>%
     subset(condition_on == "none" & !address_genetic_perturbations & seed==1) %>%
     ggplot() +
-    geom_point(aes(x = V1,  y = V2,color = as.character(cluster))) +
+    geom_point(aes(x = V1,  y = V2, color = cluster)) +
     coord_fixed() +
-    xlab("UMAP1") + ylab("UMAP2") +
+    xlab("tsne1") + ylab("tsne2") +
     facet_wrap(~knockoff_method, nrow = 2) +
-    scale_color_discrete(name = "Cluster") +
-    ggtitle("UMAP and K-means clusters from E. coli TF expression")
-  ggsave(("figures/umaps.pdf"), width = 10, height =6)
-  ggsave(("figures/umaps.svg"), width = 10, height =6)
+    ggtitle("Joint embedding of E. coli TF expression and knockoffs")
+  ggsave(("figures/tsnes.pdf"), width = 10, height =6)
+  ggsave(("figures/tsnes.svg"), width = 10, height =6)
 }
 
 # Fig <ecolisupp> B) Gold standard power
@@ -291,51 +337,25 @@ dir.create("figures", recursive = T, showWarnings = F)
   chip_power %>%  
     subset(source_network %in%  c("dream5_new_test", "regulondb10_9", "chip_tu_augmented", "regulonDB_knockout_tu_augmented", "M3Dknockout_tu_augmented")) %>%
     subset( check_network %in%  c("chip_tu_augmented", "regulonDB_knockout_tu_augmented", "M3Dknockout_tu_augmented")) %>%
+    dplyr::mutate(source_network = gsub("_tu_augmented|_", " ", source_network)) %>%
+    dplyr::mutate(check_network = gsub("_tu_augmented|_", " ", check_network)) %>%
+    dplyr::mutate(source_network = gsub("new test", "validation", source_network)) %>%
+    dplyr::mutate(check_network = gsub("new test", "validation", check_network)) %>%
     ggplot() + 
     geom_bar(stat = "identity", aes(x = regulator, y = -n_missing), fill = "red") + 
     geom_bar(stat = "identity", aes(x = regulator, y =  n_present), fill ="black") + 
     coord_flip() + 
-    ggtitle("Gold standard power to verify prior findings") + 
-    facet_grid( paste0("Edges compared to:\n", check_network) ~ paste0("Edges taken from:\n", source_network), scales = "free") +
-    ylab("Number of hypotheses that are \n(not confirmed | confirmed)") 
+    ggtitle("Gold standard power to verify prior findings", subtitle = "Edges from ... ") + 
+    facet_grid( check_network ~ source_network, scales = "free", switch = "y") +
+    ylab("Number of hypotheses that are \n(not confirmed | confirmed)") + 
+    xlab("Edges compared to ...") 
+  
   ggsave("figures/gs_comparison.pdf", width = 10, height = 7)
   ggsave("figures/gs_comparison.svg", width = 10, height = 7)
 }
 
-# Fig. <ecolisupp> Study of bias in gold standards
-{
-  # Vary knockoff generation method (real Y, calibration)
-  most_important_gold_standards = c("chip_intersection_M3Dknockout"                        ,
-                                    "chip_intersection_RegulonDB_knockout"                ,
-                                    "chip_intersection_M3Dknockout_biased_positive"        ,
-                                    "chip_intersection_RegulonDB_knockout_biased_positive",
-                                    "chip_intersection_M3Dknockout_biased_negative"       ,
-                                    "chip_intersection_RegulonDB_knockout_biased_negative" )
-  calibration_gs %>%
-    subset(
-      !omit_knockout_evaluation_samples &
-        seed==1 &
-        !address_genetic_perturbations &
-        nominal_fdr %in% c(0.2, 0.5) & 
-        knockoff_method == "glasso_0.001" &
-        gold_standard_name %in% most_important_gold_standards
-    ) %>%
-    dplyr::mutate(nominal_fdr = as.character(nominal_fdr)) %>%
-    ggplot() +
-    geom_pointrange(aes(y = condition_on, 
-                        xmin = empirical_fdr - moe_95, 
-                        xmax = empirical_fdr + moe_95, 
-                        x = empirical_fdr,
-                        color = nominal_fdr, 
-                        shape = do_omit_possible_spouses), 
-                    position = position_dodge(0.5)) +
-    facet_wrap(~wrapFacetLabels(gold_standard_name) ) +
-    geom_vline(aes(xintercept = as.numeric(nominal_fdr), color = nominal_fdr)) +
-    ggtitle("Effect of gold standard bias") +
-    scale_x_continuous(breaks = (0:2)/2, limits = 0:1) 
-  ggsave("figures/biased_gold_standards.pdf", width = 7.5, height = 4)
-  ggsave("figures/biased_gold_standards.svg", width = 7.5, height = 4)
-}
+
+
 
 
   
