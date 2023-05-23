@@ -1,12 +1,14 @@
+# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v32")
 source("../dream5_ecoli_setup.R")
 fillna =function(x, filler){ x[is.na(x)] = filler; x}
 wrapFacetLabels = function(x){
-  sapply(x, function(s){
-    s %>%
+  for(i in seq_along(x)){
+    x[[i]] = x[[i]] %>%
       gsub( "_", " ", . ) %>%
       strwrap( width = 20 ) %>%
       paste0( collapse = "\n" )
-  })
+  }
+  return(x)
 }
 ggplot2::theme_update(text = element_text(family = "ArialMT"))
 # Collect results to make certain key summary plots
@@ -144,7 +146,7 @@ dir.create("figures", recursive = T, showWarnings = F)
     facet_wrap(~name) + 
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
     geom_hline(data = data.frame(name = "proportion", value = 0.5), aes(yintercept = value), color = "red") +
-    ggtitle("KNN exchangeability test")
+    ggtitle("KNN exchangeability test", "Real data")
   ggsave("figures/exchangeability.pdf", width = 5, height = 3)
   ggsave("figures/exchangeability.svg", width = 5, height = 3)
 }
@@ -197,9 +199,9 @@ dir.create("figures", recursive = T, showWarnings = F)
                color = knockoff_method)) +  
     geom_point() + 
     geom_line() +
-    geom_abline(yintercept=0, slope=1) +
+    geom_abline(intercept=0, slope=1) +
     facet_wrap(~wrapFacetLabels( gold_standard_name ), scales = "free_y" ) +
-    ggtitle("Calibration in gold standards based on \nChIP and perturbation transcriptomics") +
+    ggtitle("Calibration in gold standards based on \nChIP and perturbation transcriptomics", "Real data") +
     scale_x_continuous(breaks = (0:2)/2, limits = 0:1)  + 
     theme(legend.position = "bottom")
   ggsave("figures/real_target_genes.pdf", width = 6.5, height = 3.5)
@@ -227,10 +229,10 @@ dir.create("figures", recursive = T, showWarnings = F)
     geom_line() +
     geom_abline(yintercept=0, slope=1) +
     facet_wrap(~wrapFacetLabels( gold_standard_name ), scales = "free_y" )+
-    ggtitle("Calibration when correcting for possible confounders") +
+    ggtitle("Calibration when correcting for possible confounders", "Real data") +
     scale_x_continuous(breaks = (0:2)/2, limits = 0:1) 
-  ggsave("figures/confounders.svg", width = 9, height = 4)
-  ggsave("figures/confounders.pdf", width = 9, height = 4)
+  ggsave("figures/confounders.svg", width = 9, height = 3)
+  ggsave("figures/confounders.pdf", width = 9, height = 3)
 }
 
 # Fig <ecoli> F) confounder adjustment power
@@ -250,11 +252,11 @@ dir.create("figures", recursive = T, showWarnings = F)
                          shape = condition_on)) +   
     geom_point() + 
     facet_wrap(~wrapFacetLabels( gold_standard_name ) )+
-    ggtitle("Power when correcting for possible confounders") +
+    ggtitle("Power when correcting for possible confounders", "Real data") +
     scale_x_continuous(breaks = (0:2)/2, limits = 0:1) + 
     ylab("Log10( 1 + number of discoveries )")
-  ggsave("figures/confounders_power.svg", width = 7, height = 3.5)
-  ggsave("figures/confounders_power.pdf", width = 7, height = 3.5)
+  ggsave("figures/confounders_power.svg", width = 7, height = 2.5)
+  ggsave("figures/confounders_power.pdf", width = 7, height = 2.5)
 }
 
 # Fig <ecolisupp> A) tsnes
@@ -287,7 +289,7 @@ dir.create("figures", recursive = T, showWarnings = F)
     coord_fixed() +
     xlab("tsne1") + ylab("tsne2") +
     facet_wrap(~knockoff_method, nrow = 2) +
-    ggtitle("Joint embedding of E. coli TF expression and knockoffs")
+    ggtitle("Joint embedding of E. coli TF expression and knockoffs", "Real data")
   ggsave(("figures/tsnes.pdf"), width = 10, height =6)
   ggsave(("figures/tsnes.svg"), width = 10, height =6)
 }
@@ -345,7 +347,7 @@ dir.create("figures", recursive = T, showWarnings = F)
     geom_bar(stat = "identity", aes(x = regulator, y = -n_missing), fill = "red") + 
     geom_bar(stat = "identity", aes(x = regulator, y =  n_present), fill ="black") + 
     coord_flip() + 
-    ggtitle("Gold standard power to verify prior findings", subtitle = "Edges from ... ") + 
+    ggtitle("Gold standard power", subtitle = "Edges from ... ") + 
     facet_grid( check_network ~ source_network, scales = "free", switch = "y") +
     ylab("Number of hypotheses that are \n(not confirmed | confirmed)") + 
     xlab("Edges compared to ...") 

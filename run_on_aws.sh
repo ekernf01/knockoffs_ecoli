@@ -1,30 +1,26 @@
 # This script runs the E coli knockoff GRN experiments assuming
 # a blank Ubuntu 18.04 as a starting point. (I used Ubuntu 18 on AWS.)
 
-# For now, I step through this interactively to put in passwords for private repos and data, but it's almost fully automated.
-
 # Retrieve the ecoli demo repo
 git clone https://github.com/ekernf01/knockoffs_ecoli.git
-# Run the rest all at once
-# source knockoffs_ecoli/run_on_aws.sh
 
 # Install aws cli, build-essential (c compiler), git, curl, and R v4
 echo "Installing software..."
-sudo apt-get update
-sudo apt-get install -y build-essential
-sudo apt-get install -y awscli
-sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
-sudo add-apt-repository 'deb https://cloud.r-project.org/bin/linux/ubuntu bionic-cran40/'
-sudo apt update
-sudo apt install -y libssl-dev libcurl4-openssl-dev libxml2-dev libfontconfig1-dev
-sudo apt install -y r-base r-base-dev r-base-core
-R --version #should be 4.1.2 
-aws configure #put your credentials
+sudo apt-get update -qq
+sudo apt-get install -y libssl-dev libcurl4-openssl-dev libxml2-dev libfontconfig1-dev build-essential awscli gdebi-core
+R_VERSION=4.1.2
+curl -O https://cdn.rstudio.com/r/ubuntu-2004/pkgs/r-${R_VERSION}_1_amd64.deb
+sudo gdebi r-${R_VERSION}_1_amd64.deb
+sudo ln -s /opt/R/${R_VERSION}/bin/R /usr/local/bin/R
+sudo ln -s /opt/R/${R_VERSION}/bin/Rscript /usr/local/bin/Rscript
+R --version # 4.1.2 desired
 
 # Retrieve the datasets used.
 echo "Fetching data..."
-aws s3 cp --recursive s3://cahanlab/eric.kernfeld/datalake/dream5       datalake/dream5
-aws s3 cp --recursive s3://cahanlab/eric.kernfeld/datalake/modern_ecoli datalake/modern_ecoli
+wget https://zenodo.org/record/6573413/files/modern_ecoli.zip
+wget https://zenodo.org/record/6573413/files/dream5.zip
+unzip modern_ecoli.zip
+unzip dream5.zip
 
 # Retrieve our package
 git clone https://github.com/ekernf01/rlookc.git
@@ -42,7 +38,9 @@ Rscript ../dream5_ecoli_install.R # it needs to refresh for some reason. Don't w
 nohup Rscript ../dream5_ecoli.R 
 # Mop up (easy to run this locally too to refine plots)
 Rscript ../dream5_ecoli_plots.R
-# export results 
+
+# Optional step: export your results to S3
+aws configure #put your credentials
 aws s3 sync .. s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli
 # # Then, on laptop:
 # aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v28 v28

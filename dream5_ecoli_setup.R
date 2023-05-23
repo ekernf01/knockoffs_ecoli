@@ -17,7 +17,7 @@ DATALAKE = "~/Desktop/jhu/research/datalake"
 if(!dir.exists(DATALAKE)){
   DATALAKE = "~/datalake"
 }
-# otherwise, complain.
+# otherwise, complain and quit.
 if(!dir.exists(DATALAKE)){
   stop("Datalake not found. Place it in '~/datalake' or modify `dream5_ecoli_setup.R`.\n")
 }
