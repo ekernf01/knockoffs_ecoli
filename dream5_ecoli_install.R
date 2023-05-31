@@ -2,7 +2,7 @@
 dir.create(path = Sys.getenv("R_LIBS_USER"), showWarnings = FALSE, recursive = TRUE)
 
 # Install packages as they were in late 2021
-install.packages("versions", lib = Sys.getenv("R_LIBS_USER"))
+install.packages("versions", lib = Sys.getenv("R_LIBS_USER"), repos = "http://cran.us.r-project.org")
 library(versions)
 versions::install.dates(
   pkgs = c("tidyverse", "magrittr", "glasso", "ggplot2", "knockoff", "irlba", "data.table",
