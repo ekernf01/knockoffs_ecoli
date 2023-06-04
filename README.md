@@ -7,3 +7,5 @@ Code to repeat our experiments on *E. coli* for our manuscript "Model-X knockoff
 docker pull    ekernf01/knockoffs_ecoli
 docker run -it ekernf01/knockoffs_ecoli
 ```
+
+You probably will need to run those commands using sudo. You may need to make a couple more changes too: in our limited tests, most r packages were installed but ours, rlookc, was merely downloaded and not installed. That's fixable with `install.packages("rlookc", repos = NULL, type = "source", lib = Sys.getenv("R_LIBS_USER"))`, and we just don't want to make this change in the install script because it might break backwards compatibility with our current instructions. Docker is not how we ran our experiments initially, but with AWS already phasing out Ubuntu 18.04, we hope this Docker image will allow exact repro further into the future. 
