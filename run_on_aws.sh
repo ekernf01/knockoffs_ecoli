@@ -23,17 +23,16 @@ unzip modern_ecoli.zip
 unzip dream5.zip
 
 # Retrieve our package
-git clone https://github.com/ekernf01/rlookc.git
+git clone https://github.com/ekernf01/rlookc.git@840bf3a
 
 # Enter the ecoli demo repo.
 cd knockoffs_ecoli
 
 # Change this if you want to run a new set of conditions without overwriting. 
-mkdir v28 && cd v28
+mkdir v34 && cd v34
 
 # Install some R packages
 Rscript ../dream5_ecoli_install.R
-Rscript ../dream5_ecoli_install.R # it needs to refresh for some reason. Don't worry if you see "no package called versions"; that resolves the second time.
 # Run tests. 
 nohup Rscript ../dream5_ecoli.R 
 # Mop up (easy to run this locally too to refine plots)

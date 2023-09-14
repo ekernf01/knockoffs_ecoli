@@ -1,6 +1,6 @@
 FROM ubuntu:20.04
 
-# Install aws cli, build-essential (c compiler), curl, git, and R v4
+# Install aws cli, build-essential (c compiler), curl, git, and R v4.1.2
 RUN apt-get update -qq
 RUN apt-get install -yq libicu-dev 
 RUN apt-get install -yq libc6-dev 
@@ -26,7 +26,5 @@ RUN R --version
 RUN git clone https://github.com/ekernf01/rlookc.git
 RUN git clone https://github.com/ekernf01/knockoffs_ecoli.git
 
-# Install the R packages we need. This fails and then works due to a "versions" quirk, so we run it twice.
-RUN Rscript knockoffs_ecoli/dream5_ecoli_install.R || Rscript knockoffs_ecoli/dream5_ecoli_install.R
-
-
+# Install the R packages we need. 
+RUN Rscript knockoffs_ecoli/dream5_ecoli_install.R

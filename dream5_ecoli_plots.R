@@ -34,13 +34,19 @@ for(omit_knockout_evaluation_samples in c(T, F)){
       # This is more complex if done with knockout samples included & excluded; we just do included
       if(!omit_knockout_evaluation_samples){ 
         withr::with_dir(working_directory, {
-          knockoffs[[condition_index]] = read.csv("knockoffs.csv", row.names = 1) %>% set_colnames(NULL)
-          exchangeability[[condition_index]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])
-          conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
-          conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
-          # Wrapped in trycatch because sometimes we don't do this. 
+          if(conditions_with_summaries[condition_index, "fdr_control_method"]=="knockoffs") {
+            knockoffs[[condition_index]] = read.csv("knockoffs.csv", row.names = 1) %>% set_colnames(NULL)
+            exchangeability[[condition_index]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])
+            conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
+            conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
+          } else {
+            conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  NA
+            conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  NA
+          }
+          # Wrapped in trycatch because sometimes we don't do these simulations and there's no data to slurp in. 
           calibration_sim[[condition_index]] = tryCatch(
             {
+            print(getwd())
               read.csv("average_case_calibration.csv", row.names = 1) %>%
                 colMeans %>%
                 (function(x) data.frame(expected_fdr = gsub("^X", "", names(x)) %>% as.numeric, observed_fdr = x)) %>% 
@@ -93,24 +99,6 @@ conditions_with_summaries %<>% prettify_names
 calibration_sim %<>% prettify_names
 calibration_gs %<>% prettify_names
 
-# GeneNet benchmarks were done separately.
-genets_benchmark =
-  readRDS("genets_benchmark/calibration_simulated_y_nonlinear.Rdata")$calibration$fdr %>%   
-  colMeans %>%
-  (function(x) data.frame(expected_fdr = gsub("^X", "", names(x)) %>% as.numeric, observed_fdr = x)) %>%
-  dplyr::mutate(knockoff_type = "GeneNets (not knockoff-based)", 
-                address_genetic_perturbations = F, 
-                condition_on = "none", 
-                shrinkage_param = 0.0364,
-                proportion_removed = 0,
-                do_simulate_y = T,
-                seed = 1, 
-                omit_knockout_evaluation_samples = F, 
-                knockoff_method = "GeneNets (not knockoff-based)" )
-genets_benchmark %<>% prettify_names
-calibration_sim %<>% rbind(genets_benchmark)
-
-
 # Coarsely categorize gold standards for certain plots
 calibration_gs %<>% 
   dplyr::mutate(gold_standard_category = "") %>%
@@ -131,10 +119,8 @@ dir.create("figures", recursive = T, showWarnings = F)
       !omit_knockout_evaluation_samples &
         condition_on == "none" &
         seed==1 &
-        !address_genetic_perturbations & 
-        proportion_removed==0
+        !address_genetic_perturbations
     ) %>%
-    dplyr::mutate(proportion_removed = as.character(proportion_removed)) %>%
     dplyr::mutate(knockoff_method = reorder(knockoff_method, KNN_exchangeability_proportion)) %>%
     tidyr::pivot_longer(cols = c("KNN_exchangeability_proportion", "KNN_exchangeability_p"), 
                         names_prefix = "KNN_exchangeability_") %>%
@@ -154,18 +140,26 @@ dir.create("figures", recursive = T, showWarnings = F)
 # Fig <ecoli> B) Simulated target genes
 {
   calibration_sim %>%   
-    dplyr::mutate(proportion_removed = as.character(proportion_removed)) %>%
     subset(T & 
              condition_on == "none" & 
              !address_genetic_perturbations & 
-             seed==1 &
-             proportion_removed == 0
+             seed==1 
            ) %>%
     subset(do_simulate_y) %>%
     subset(!is.na(knockoff_method)) %>%
-    ggplot() +
-    geom_line( aes(x = expected_fdr, y = observed_fdr, color = knockoff_method, linetype = knockoff_method)) +
-    geom_point(aes(x = expected_fdr, y = observed_fdr, color = knockoff_method,    shape = knockoff_method)) +
+    ggplot(
+      aes(
+        x = expected_fdr, 
+        y = observed_fdr, 
+        color = paste(
+          fdr_control_method,
+          gsub("NA", "", knockoff_method)
+        )
+      )
+    ) +
+    labs(colour = "FDR control method") + 
+    geom_line() +
+    geom_point() +
     geom_abline(aes(slope = 1, intercept = 0)) +
     ggtitle("Calibration by method", subtitle = "Simulated target genes") +
     scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
@@ -185,25 +179,27 @@ dir.create("figures", recursive = T, showWarnings = F)
       !omit_knockout_evaluation_samples &
         condition_on == "none" &
         do_simulate_y &
-        proportion_removed == 0 &
         seed==1 &
         !address_genetic_perturbations &
         gold_standard_name %in% most_important_gold_standards & 
         do_omit_possible_spouses 
       ) %>%
-    dplyr::mutate(proportion_removed = as.character(proportion_removed)) %>%
-    ggplot(aes(x = expected_fdr, 
-               y = observed_fdr, 
-               linetype = knockoff_method, 
-               shape = knockoff_method, 
-               color = knockoff_method)) +  
+    ggplot(
+      aes(x = expected_fdr, 
+          y = observed_fdr, 
+          color = paste(
+            fdr_control_method,
+            gsub("NA", "", knockoff_method)
+          )
+      )
+    ) +
+    labs(colour = "FDR control method") + 
     geom_point() + 
     geom_line() +
     geom_abline(intercept=0, slope=1) +
     facet_wrap(~wrapFacetLabels( gold_standard_name ), scales = "free_y" ) +
     ggtitle("Calibration in gold standards based on \nChIP and perturbation transcriptomics", "Real data") +
-    scale_x_continuous(breaks = (0:2)/2, limits = 0:1)  + 
-    theme(legend.position = "bottom")
+    scale_x_continuous(breaks = (0:2)/2, limits = 0:1)  
   ggsave("figures/real_target_genes.pdf", width = 6.5, height = 3.5)
   ggsave("figures/real_target_genes.svg", width = 6.5, height = 3.5)
 }
@@ -214,10 +210,8 @@ dir.create("figures", recursive = T, showWarnings = F)
     subset(
       !omit_knockout_evaluation_samples &
         knockoff_method == "glasso_1e-04" &
-        proportion_removed == 0 &
         seed==1 &
         !address_genetic_perturbations &
-        # expected_fdr %in% c(0.2, 0.5)& 
         gold_standard_name %in% most_important_gold_standards
     ) %>%
     # dplyr::mutate(expected_fdr = as.character(expected_fdr)) %>%
@@ -241,7 +235,6 @@ dir.create("figures", recursive = T, showWarnings = F)
     subset(
       !omit_knockout_evaluation_samples &
         knockoff_method == "glasso_1e-04" &
-        proportion_removed == 0 &
         seed==1 &
         !address_genetic_perturbations &
         gold_standard_name %in% most_important_gold_standards
