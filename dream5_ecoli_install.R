@@ -27,7 +27,6 @@ for(i in rownames(pv)){
   remotes::install_version(
     pv[i, "package"], 
     version = pv[i, "version"], 
-    lib = Sys.getenv("R_LIBS_USER"), 
     upgrade = "never", 
     quiet = TRUE, 
     repos = "https://cloud.r-project.org/"
