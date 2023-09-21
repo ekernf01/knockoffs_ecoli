@@ -21,9 +21,9 @@ wget https://zenodo.org/record/6573413/files/modern_ecoli.zip
 wget https://zenodo.org/record/6573413/files/dream5.zip
 unzip modern_ecoli.zip
 unzip dream5.zip
-
-# Retrieve our package
-git clone https://github.com/ekernf01/rlookc.git@840bf3a
+mkdir datalake
+mv modern_ecoli datalake
+mv dream5 datalake
 
 # Enter the ecoli demo repo.
 cd knockoffs_ecoli
@@ -34,6 +34,11 @@ mkdir v34 && cd v34
 # Install some R packages
 Rscript ../dream5_ecoli_install.R
 # Run tests. 
+echo "" > successful_jobs.txt
+nohup Rscript ../dream5_ecoli.R 
+# Check success/failure
+grep Evaluating logs/* | cut -f1 -d: | cut -f2 -d/ | sort -n | uniq > successful_jobs.txt
+# Re-run failed jobs
 nohup Rscript ../dream5_ecoli.R 
 # Mop up (easy to run this locally too to refine plots)
 Rscript ../dream5_ecoli_plots.R

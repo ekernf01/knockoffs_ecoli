@@ -21,7 +21,8 @@ poolr 1.0.0
 svglite 2.0.0
 vita 1.0.0
 GeneNet 1.2.15
-mclust 5.4.7"
+mclust 5.4.7
+remotes 2.4.2"
 )
 for(i in rownames(pv)){
   remotes::install_version(
@@ -35,7 +36,5 @@ for(i in rownames(pv)){
 BiocManager::install(c("limma", "GENIE3", "doRNG"), version = "3.14")
 
 # Install our package
-install.packages("~/rlookc", repos = NULL, type = "source", lib = Sys.getenv("R_LIBS_USER"))
-
-# Install BINCO
-install.packages("https://cran.r-project.org/src/contrib/Archive/BINCO/BINCO_0.1-1.tar.gz", from = "source", repo = NULL)
+remotes::install_github("ekernf01/rlookc", ref="840bf3a")
+remotes::install_github("ekernf01/gm", ref="547a42a")

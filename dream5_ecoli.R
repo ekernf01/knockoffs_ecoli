@@ -5,9 +5,10 @@ source("../dream5_ecoli_gold_standards.R")
 source("../dream5_ecoli_setup.R")
 dir.create("logs")
 
+successful_jobs = read.csv("successful_jobs.txt")[[1]]
 # The full run.
 parallel::mclapply(
-  1:nrow(conditions),
+  1:nrow(conditions) %>% setdiff(successful_jobs),
   do_one_safe, 
   reuse_results = F, 
   mc.cores = parallel::detectCores()-1
