@@ -8,7 +8,7 @@ dir.create("logs")
 successful_jobs = read.csv("successful_jobs.txt")[[1]]
 # The full run.
 parallel::mclapply(
-  1:nrow(conditions) %>% setdiff(successful_jobs),
+  (1:nrow(conditions)) %>% setdiff(successful_jobs),
   do_one_safe, 
   reuse_results = F, 
   mc.cores = parallel::detectCores()-1

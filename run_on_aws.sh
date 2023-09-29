@@ -47,4 +47,4 @@ Rscript ../dream5_ecoli_plots.R
 aws configure #put your credentials
 aws s3 sync .. s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli
 # # Then, on laptop:
-# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v28 v28
+# aws s3 sync s3://cahanlab/eric.kernfeld/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v34 v34

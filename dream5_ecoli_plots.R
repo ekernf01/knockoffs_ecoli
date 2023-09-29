@@ -1,4 +1,5 @@
-# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v32")
+# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v34")
+source("../dream5_ecoli_gold_standards.R")
 source("../dream5_ecoli_setup.R")
 fillna =function(x, filler){ x[is.na(x)] = filler; x}
 wrapFacetLabels = function(x){
@@ -14,63 +15,64 @@ ggplot2::theme_update(text = element_text(family = "ArialMT"))
 # Collect results to make certain key summary plots
 # This will allow us to show calibration on any combination of gold standard, knockoff construction method,
 # number of principal components, et cetera by subsetting a giant tidy dataframe. 
-cat("Loading experimental results and making tsnes...")
+cat("Loading experimental results...")
 conditions_with_summaries = conditions = read.csv("experiments_to_run.csv", row.names = 1)
 exchangeability = tsnes = knockoffs = calibration_sim = calibration_gs = list()
 i = 0
-for(omit_knockout_evaluation_samples in c(T, F)){
-  for(condition_index in nrow(conditions):1){
-    try({
-      conditions$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
-      conditions_with_summaries$omit_knockout_evaluation_samples = omit_knockout_evaluation_samples
-      write.table(conditions[condition_index,], sep = "\t", quote = F)
-      attach(conditions[condition_index,], warn.conflicts = F)
-      working_directory = ""
-      for(j in seq_along(conditions[condition_index,])){
-        prefix = paste0( colnames(conditions)[[j]], "=", conditions[condition_index, j] )
-        working_directory %<>% file.path(prefix, .)
-      }
-      # Check out the knockoffs via tsne and KNN exchangeability test
-      # This is more complex if done with knockout samples included & excluded; we just do included
-      if(!omit_knockout_evaluation_samples){ 
-        withr::with_dir(working_directory, {
-          if(conditions_with_summaries[condition_index, "fdr_control_method"]=="knockoffs") {
-            knockoffs[[condition_index]] = read.csv("knockoffs.csv", row.names = 1) %>% set_colnames(NULL)
-            exchangeability[[condition_index]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])
-            conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
-            conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
-          } else {
-            conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  NA
-            conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  NA
-          }
-          # Wrapped in trycatch because sometimes we don't do these simulations and there's no data to slurp in. 
-          calibration_sim[[condition_index]] = tryCatch(
-            {
+for(condition_index in nrow(conditions):1){
+  try({
+    write.table(conditions[condition_index,], sep = "\t", quote = F)
+    attach(conditions[condition_index,], warn.conflicts = F)
+    working_directory = ""
+    for(j in seq_along(conditions[condition_index,])){
+      prefix = paste0( colnames(conditions)[[j]], "=", conditions[condition_index, j] )
+      working_directory %<>% file.path(prefix, .)
+    }
+    # Check out the knockoffs via tsne and KNN exchangeability test
+    # This is more complex if done with knockout samples included & excluded; we just do included
+    if(!omit_knockout_evaluation_samples){ 
+      withr::with_dir(working_directory, {
+        if(conditions_with_summaries[condition_index, "fdr_control_method"]=="knockoffs") {
+          conditions_with_summaries[condition_index, "index_in_list_of_knockoffs"] = paste0(condition_index, "_")
+          knockoffs[[paste0(condition_index, "_")]] = read.csv("knockoffs.csv", row.names = 1) %>% set_colnames(NULL)
+          exchangeability[[condition_index]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])
+          conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
+          conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
+        } else {
+          conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  NA
+          conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  NA
+        }
+        # Wrapped in trycatch because sometimes we don't do these simulations and there's no data to slurp in. 
+        calibration_sim[[condition_index]] = tryCatch(
+          {
             print(getwd())
-              read.csv("average_case_calibration.csv", row.names = 1) %>%
-                colMeans %>%
-                (function(x) data.frame(expected_fdr = gsub("^X", "", names(x)) %>% as.numeric, observed_fdr = x)) %>% 
-                merge(conditions[condition_index,])
-            },
-            error = function(e) data.frame()
+            read.csv("average_case_calibration.csv", row.names = 1) %>%
+              colMeans %>%
+              (function(x) data.frame(expected_fdr = gsub("^X", "", names(x)) %>% as.numeric, observed_fdr = x)) %>% 
+              merge(conditions[condition_index,])
+          },
+          error = function(e) data.frame()
+        )
+      })
+    }
+    # check vs various gold standards
+    for( gold_standard_name in names(ecoli_networks) ){
+      try(
+        silent = T,
+        {
+          i = i + 1
+          withr::with_dir(file.path(working_directory, gold_standard_name), {
+            calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
+            calibration_gs[[i]] %<>% merge(conditions[condition_index,])
+            calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
+          }
           )
-        })
-      }
-      # check vs various gold standards
-      for( gold_standard_name in names(ecoli_networks) ){
-        try(silent = T,
-            {
-              i = i + 1
-              withr::with_dir(file.path(working_directory, gold_standard_name), {
-                calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
-                calibration_gs[[i]] %<>% merge(conditions[condition_index,])
-                calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
-              })
-            })
-      }
-    })
-  }
+        }
+      )
+    }
+  })
 }
+
 calibration_gs %<>% data.table::rbindlist()
 calibration_sim %<>% data.table::rbindlist()
 conditions_with_summaries %<>% mutate( knockoff_method = paste0(knockoff_type, "_", shrinkage_param) %>% gsub("_NA", "", .) )
@@ -109,7 +111,7 @@ calibration_gs %<>%
   dplyr::mutate(gold_standard_category = ifelse(grepl("regulonDB_knockout", ignore.case = T, gold_standard_name), "RegulonDB knockouts", gold_standard_category)) %>%
   dplyr::mutate(gold_standard_category = ifelse(grepl("negative", ignore.case = T, gold_standard_name), "Biased negative", gold_standard_category)) %>%
   dplyr::mutate(gold_standard_category = ifelse(grepl("positive", ignore.case = T, gold_standard_name), "Biased positive", gold_standard_category)) 
-  
+
 dir.create("figures", recursive = T, showWarnings = F)
 
 # Fig <ecoli> A) KNN exchangeability
@@ -144,7 +146,7 @@ dir.create("figures", recursive = T, showWarnings = F)
              condition_on == "none" & 
              !address_genetic_perturbations & 
              seed==1 
-           ) %>%
+    ) %>%
     subset(do_simulate_y) %>%
     subset(!is.na(knockoff_method)) %>%
     ggplot(
@@ -173,7 +175,7 @@ dir.create("figures", recursive = T, showWarnings = F)
 {
   # Vary knockoff generation method (real Y, calibration)
   most_important_gold_standards = c(#"dream5_new_test", "regulondb10_9", "dream5", "chip_tu_augmented", 
-                                    "chip and M3Dknockout", "chip and RegulonDB knockout")
+    "chip and M3Dknockout", "chip and RegulonDB knockout")
   calibration_gs %>%
     subset(
       !omit_knockout_evaluation_samples &
@@ -183,7 +185,7 @@ dir.create("figures", recursive = T, showWarnings = F)
         !address_genetic_perturbations &
         gold_standard_name %in% most_important_gold_standards & 
         do_omit_possible_spouses 
-      ) %>%
+    ) %>%
     ggplot(
       aes(x = expected_fdr, 
           y = observed_fdr, 
@@ -256,9 +258,19 @@ dir.create("figures", recursive = T, showWarnings = F)
 {
   # Visualize data and knockoffs: does the important structure seem to be captured?
   which_to_tsne = conditions_with_summaries %>% 
-    subset(seed==1 & condition_on == "none" & do_simulate_y & proportion_removed==0, select = "knockoff_method")
-  matrices_to_tsne = data.table::rbindlist( c( knockoffs[as.numeric(rownames(which_to_tsne))], list( data.frame( ecoli_tf_expression ) ) ) )
-  which_to_tsne[8, "knockoff_method"] = "real data"
+    subset(
+      T &
+        knockoff_method != "NA" & 
+        seed==1 & 
+        condition_on == "none"  & 
+        omit_knockout_evaluation_samples == F & 
+        do_simulate_y
+    )
+  matrices_to_tsne = data.table::rbindlist( c( 
+    knockoffs[which_to_tsne$index_in_list_of_knockoffs], 
+    list( data.frame( ecoli_tf_expression ) )
+  ) ) 
+  which_to_tsne %<>% rbind( ., "real data" )
   set.seed(0) # make tsne repeatable
   tsnes = tsne::tsne(matrices_to_tsne)
   facet_order = c(
@@ -306,7 +318,7 @@ dir.create("figures", recursive = T, showWarnings = F)
       as.data.frame.matrix %>% 
       add_totals %>% 
       set_colnames(c("n_missing", "n_present")) %>%
-      dplyr::add_rownames(var = "regulator") %>%
+      tibble::rownames_to_column(var = "regulator") %>%
       dplyr::mutate(n_total =   n_missing + n_present ) %>%
       dplyr::mutate(prop_present = n_present/n_total ) %>%
       dplyr::mutate(source_network = regulon_network_name ) %>%
@@ -353,8 +365,7 @@ dir.create("figures", recursive = T, showWarnings = F)
 
 
 
-  
-  
-  
-  
-  
+
+
+
+
