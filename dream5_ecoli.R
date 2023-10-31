@@ -1,11 +1,12 @@
 # These lines are not needed when using the wrapper script run_on_aws, but they are useful for interacting with it in rstudio.
-# dir.create("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v34/")
-# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v34/")
+# dir.create("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v35/")
+# setwd("~/Desktop/jhu/research/projects/knockoffs/applications/dream5_sa_ec/ecoli/v35/")
 source("../dream5_ecoli_gold_standards.R")
 source("../dream5_ecoli_setup.R")
 dir.create("logs")
 
-successful_jobs = read.csv("successful_jobs.txt")[[1]]
+successful_jobs = c()
+try({successful_jobs = read.csv("successful_jobs.txt")[[1]]})
 # The full run.
 parallel::mclapply(
   (1:nrow(conditions)) %>% setdiff(successful_jobs),

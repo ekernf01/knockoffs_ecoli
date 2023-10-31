@@ -380,7 +380,7 @@ do_one = function(condition_index, reuse_results = F, test_mode = F){
           cores = 1,
           rng_seed = seed,
           n_sim = ifelse(test_mode, 5, 1000),
-          active_set_size = pmax(1, rpois(2, n = 1000)),
+          active_set_size = 1,#pmax(1, rpois(2, n = 1000)),
           X = ecoli_tf_expression_working_copy %>% sweep(2, colMeans(ecoli_tf_expression_working_copy), "-"),
           knockoffs = replicate(10, simplify = F, {
             make_knockoffs(ecoli_tf_expression_working_copy = ecoli_tf_expression_working_copy,

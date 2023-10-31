@@ -35,7 +35,7 @@ for(condition_index in nrow(conditions):1){
         if(conditions_with_summaries[condition_index, "fdr_control_method"]=="knockoffs") {
           conditions_with_summaries[condition_index, "index_in_list_of_knockoffs"] = paste0(condition_index, "_")
           knockoffs[[paste0(condition_index, "_")]] = read.csv("knockoffs.csv", row.names = 1) %>% set_colnames(NULL)
-          exchangeability[[condition_index]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[condition_index]])
+          exchangeability[[condition_index]] = rlookc::KNNTest(X = ecoli_tf_expression, X_k = knockoffs[[paste0(condition_index, "_")]])
           conditions_with_summaries[condition_index, "KNN_exchangeability_p"]          =  exchangeability[[condition_index]] %>% extract2("p_value")
           conditions_with_summaries[condition_index, "KNN_exchangeability_proportion"] =  exchangeability[[condition_index]] %>% extract2("prop_not_swapped")
         } else {
@@ -63,10 +63,9 @@ for(condition_index in nrow(conditions):1){
           i = i + 1
           withr::with_dir(file.path(working_directory, gold_standard_name), {
             calibration_gs[[i]] = read.csv("ecoli_calibration.csv.gz")
-            calibration_gs[[i]] %<>% merge(conditions[condition_index,])
-            calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
-          }
-          )
+          })
+          calibration_gs[[i]] %<>% merge(conditions[condition_index,])
+          calibration_gs[[i]][["gold_standard_name"]] = gold_standard_name
         }
       )
     }
@@ -134,7 +133,7 @@ dir.create("figures", recursive = T, showWarnings = F)
     facet_wrap(~name) + 
     theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
     geom_hline(data = data.frame(name = "proportion", value = 0.5), aes(yintercept = value), color = "red") +
-    ggtitle("KNN exchangeability test", "Real data")
+    ggtitle("KNN exchangeability test", "Real data") 
   ggsave("figures/exchangeability.pdf", width = 5, height = 3)
   ggsave("figures/exchangeability.svg", width = 5, height = 3)
 }
@@ -159,9 +158,12 @@ dir.create("figures", recursive = T, showWarnings = F)
         )
       )
     ) +
-    labs(colour = "FDR control method") + 
+    labs(
+      colour = "FDR control method", 
+      x = "Expected FDR",
+      y = "Observed FDR", 
+    ) + 
     geom_line() +
-    geom_point() +
     geom_abline(aes(slope = 1, intercept = 0)) +
     ggtitle("Calibration by method", subtitle = "Simulated target genes") +
     scale_x_continuous(breaks = ((0:2)/2) %>% setNames(c("0", "0.5", "1")), limits = 0:1) +  
@@ -184,7 +186,8 @@ dir.create("figures", recursive = T, showWarnings = F)
         seed==1 &
         !address_genetic_perturbations &
         gold_standard_name %in% most_important_gold_standards & 
-        do_omit_possible_spouses 
+        do_omit_possible_spouses &
+        num_discoveries >= 10
     ) %>%
     ggplot(
       aes(x = expected_fdr, 
@@ -196,37 +199,78 @@ dir.create("figures", recursive = T, showWarnings = F)
       )
     ) +
     labs(colour = "FDR control method") + 
-    geom_point() + 
     geom_line() +
     geom_abline(intercept=0, slope=1) +
     facet_wrap(~wrapFacetLabels( gold_standard_name ), scales = "free_y" ) +
     ggtitle("Calibration in gold standards based on \nChIP and perturbation transcriptomics", "Real data") +
-    scale_x_continuous(breaks = (0:2)/2, limits = 0:1)  
+    scale_x_continuous(breaks = (0:2)/2, limits = 0:1)  +
+    xlab("Expected FDR") + 
+    ylab("Observed FDR")
   ggsave("figures/real_target_genes.pdf", width = 6.5, height = 3.5)
   ggsave("figures/real_target_genes.svg", width = 6.5, height = 3.5)
 }
 
-# Fig <ecoli> D) confounder adjustment
+# Fig <ecoli> between C and D) Real target genes (power instead of calibration)
+{
+  # Vary knockoff generation method (real Y, calibration)
+  most_important_gold_standards = c(#"dream5_new_test", "regulondb10_9", "dream5", "chip_tu_augmented", 
+    "chip and M3Dknockout", "chip and RegulonDB knockout")
+  calibration_gs %>%
+    subset(
+      !omit_knockout_evaluation_samples &
+        condition_on == "none" &
+        do_simulate_y &
+        seed==1 &
+        !address_genetic_perturbations &
+        gold_standard_name %in% most_important_gold_standards & 
+        do_omit_possible_spouses 
+    ) %>%
+    ggplot(
+      aes(x = expected_fdr, 
+          y = num_discoveries, 
+          color = paste(
+            fdr_control_method,
+            gsub("NA", "", knockoff_method)
+          )
+      )
+    ) +
+    labs(colour = "FDR control method") + 
+    geom_line() +
+    facet_wrap(~wrapFacetLabels( gold_standard_name ), scales = "free_y" ) +
+    ggtitle("Power in gold standards based on \nChIP and perturbation transcriptomics", "Real data") +
+    scale_x_continuous(breaks = (0:2)/2, limits = 0:1)  +
+    scale_y_log10()  
+  ggsave("figures/real_target_genes_power.pdf", width = 6.5, height = 3.5)
+  ggsave("figures/real_target_genes_power.svg", width = 6.5, height = 3.5)
+}
+
+# Fig <ecoli> E) confounder adjustment
 {
   calibration_gs %>%
     subset(
       !omit_knockout_evaluation_samples &
-        knockoff_method == "glasso_1e-04" &
-        seed==1 &
+        knockoff_type == "glasso" & 
+        shrinkage_param == "1e-04" &
+        seed==1 & 
+        do_simulate_y == F &
         !address_genetic_perturbations &
+        num_discoveries >= 10 &
         gold_standard_name %in% most_important_gold_standards
     ) %>%
-    # dplyr::mutate(expected_fdr = as.character(expected_fdr)) %>%
     ggplot(mapping = aes(x = expected_fdr, 
                          y = observed_fdr,
                          color = condition_on, 
                          shape = condition_on)) +   
-    geom_point() + 
     geom_line() +
     geom_abline(yintercept=0, slope=1) +
     facet_wrap(~wrapFacetLabels( gold_standard_name ), scales = "free_y" )+
     ggtitle("Calibration when correcting for possible confounders", "Real data") +
-    scale_x_continuous(breaks = (0:2)/2, limits = 0:1) 
+    scale_x_continuous(breaks = (0:2)/2, limits = 0:1)  + 
+    labs(
+      colour = "Covariates used", 
+      x = "Expected FDR",
+      y = "Observed FDR", 
+    ) 
   ggsave("figures/confounders.svg", width = 9, height = 3)
   ggsave("figures/confounders.pdf", width = 9, height = 3)
 }
@@ -238,6 +282,7 @@ dir.create("figures", recursive = T, showWarnings = F)
       !omit_knockout_evaluation_samples &
         knockoff_method == "glasso_1e-04" &
         seed==1 &
+        do_simulate_y == F &
         !address_genetic_perturbations &
         gold_standard_name %in% most_important_gold_standards
     ) %>%
@@ -245,11 +290,13 @@ dir.create("figures", recursive = T, showWarnings = F)
                          y = log10(num_discoveries+1),
                          color = condition_on, 
                          shape = condition_on)) +   
-    geom_point() + 
+    geom_line() + 
     facet_wrap(~wrapFacetLabels( gold_standard_name ) )+
     ggtitle("Power when correcting for possible confounders", "Real data") +
     scale_x_continuous(breaks = (0:2)/2, limits = 0:1) + 
-    ylab("Log10( 1 + number of discoveries )")
+    ylab("Log10( 1 + number of discoveries )") + 
+    xlab("Expected FDR") + 
+    labs(color = "Covariates used")
   ggsave("figures/confounders_power.svg", width = 7, height = 2.5)
   ggsave("figures/confounders_power.pdf", width = 7, height = 2.5)
 }
