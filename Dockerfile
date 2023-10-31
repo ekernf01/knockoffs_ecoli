@@ -23,6 +23,8 @@ RUN R --version
 
 # Get our code
 RUN git clone https://github.com/ekernf01/knockoffs_ecoli.git
+RUN git clone https://github.com/ekernf01/rlookc.git
+RUN git clone https://github.com/ekernf01/GM.git
 
 # Install the R packages we need. 
 RUN Rscript knockoffs_ecoli/dream5_ecoli_install.R ||  Rscript knockoffs_ecoli/dream5_ecoli_install.R

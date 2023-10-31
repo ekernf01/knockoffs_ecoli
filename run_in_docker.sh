@@ -1,7 +1,3 @@
-
-# Install our package
-Rscript -e 'install.packages("rlookc", repos = NULL, type = "source", lib = Sys.getenv("R_LIBS_USER"))'
-
 # Retrieve the datasets used.
 echo "Fetching data..."
 mkdir ~/datalake
