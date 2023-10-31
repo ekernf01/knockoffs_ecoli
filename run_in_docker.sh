@@ -14,10 +14,11 @@ cd /
 
 # Enter the ecoli demo repo.
 cd knockoffs_ecoli
-mkdir v28
-cd v28
+mkdir v35
+cd v35
+mkdir logs
 
 # Run tests. 
-Rscript ../dream5_ecoli.R 
+Rscript ../dream5_ecoli.R  &> logs/analysis.txt
 # Mop up (easy to run this locally too to refine plots)
-Rscript ../dream5_ecoli_plots.R
+Rscript ../dream5_ecoli_plots.R &> logs/plots.txt

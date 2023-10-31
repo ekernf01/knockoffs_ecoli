@@ -21,6 +21,9 @@ RUN R_VERSION=4.1.2 && gdebi -n r-${R_VERSION}_1_amd64.deb
 RUN R_VERSION=4.1.2 && ln -s /opt/R/${R_VERSION}/bin/R /usr/local/bin/R && ln -s /opt/R/${R_VERSION}/bin/Rscript /usr/local/bin/Rscript
 RUN R --version
 
+# Get our code
+RUN git clone https://github.com/ekernf01/knockoffs_ecoli.git
+
 # Install the R packages we need. 
 RUN Rscript knockoffs_ecoli/dream5_ecoli_install.R ||  Rscript knockoffs_ecoli/dream5_ecoli_install.R
 RUN apt-get install -yq wget
