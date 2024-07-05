@@ -5,8 +5,8 @@ Code to repeat our experiments on *E. coli* for our manuscript "Model-X knockoff
 We also have a docker image for better chance of long-term reproducibility. To start it, run these commands.
 
 ```sh
-sudo docker pull    ekernf01/knockoffs_ecoli
-sudo docker run -it --rm ekernf01/knockoffs_ecoli
+docker pull    ekernf01/knockoffs_ecoli
+docker run -it --rm ekernf01/knockoffs_ecoli
 ```
 
 This will land you in an interactive shell in the Docker container, and you can run our experiments by running [`run_in_docker.sh`](https://github.com/ekernf01/knockoffs_ecoli/blob/main/run_in_docker.sh).
